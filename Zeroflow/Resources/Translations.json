@@ -624,10 +624,10 @@
     "en": "Maximum Height",
     "ja": "最大高さ"
   },
-  "鼠标停留在刘海区域多久后弹出面板；单击刘海区域可立即弹出。显示 2 个内容模块时面板固定为最大尺寸（两卡片各占一半宽度），单模块时按内容收缩；内容超出面板时整体等比缩小以完整显示。": {
-    "zh-Hans": "鼠标停留在刘海区域多久后弹出面板；单击刘海区域可立即弹出。显示 2 个内容模块时面板固定为最大尺寸（两卡片各占一半宽度），单模块时按内容收缩；内容超出面板时整体等比缩小以完整显示。",
-    "en": "How long the pointer must stay on the notch before the panel appears; clicking the notch opens it instantly. With 2 content modules the panel uses the maximum size (each card takes half the width); with a single module it shrinks to fit its content. Oversized content is scaled down proportionally to stay fully visible.",
-    "ja": "ホバーしてからパネルが表示されるまでの時間。ノッチをクリックすると即座に開きます。コンテンツモジュールを 2 つ表示する場合はパネルが最大サイズで固定され（各カードが幅の半分ずつ）、1 つの場合は内容に合わせて収縮します。収まりきらない内容は等比縮小して全体を表示します。"
+  "鼠标停留在刘海区域多久后弹出面板；单击刘海区域可立即弹出，移出后同样按此时长延迟收起。显示 2 个内容模块时面板固定为最大尺寸（两卡片各占一半宽度），单模块时按内容收缩；内容超出面板时整体等比缩小以完整显示。": {
+    "zh-Hans": "鼠标停留在刘海区域多久后弹出面板；单击刘海区域可立即弹出，移出后同样按此时长延迟收起。显示 2 个内容模块时面板固定为最大尺寸（两卡片各占一半宽度），单模块时按内容收缩；内容超出面板时整体等比缩小以完整显示。",
+    "en": "How long the pointer must stay on the notch before the panel appears; clicking the notch opens it instantly, and after the pointer leaves the panel collapses after the same delay. With 2 content modules the panel uses the maximum size (each card takes half the width); with a single module it shrinks to fit its content. Oversized content is scaled down proportionally to stay fully visible.",
+    "ja": "ホバーしてからパネルが表示されるまでの時間。ノッチをクリックすると即座に開き、ポインターが離れると同じ時間だけ待ってから収縮します。コンテンツモジュールを 2 つ表示する場合はパネルが最大サイズで固定され（各カードが幅の半分ずつ）、1 つの場合は内容に合わせて収縮します。収まりきらない内容は等比縮小して全体を表示します。"
   },
   "弹出面板中显示的内容模块，最多同时显示 2 个。全部关闭时，面板仍会弹出并提示添加显示内容。": {
     "zh-Hans": "弹出面板中显示的内容模块，最多同时显示 2 个。全部关闭时，面板仍会弹出并提示添加显示内容。",

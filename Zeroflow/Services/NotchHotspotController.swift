@@ -12,7 +12,7 @@ import CoreGraphics
 ///   `auxiliaryTopLeftArea` / `auxiliaryTopRightArea` 之间的水平间隙即刘海（竖向占满菜单栏条带）；
 ///   热区 = 刘海矩形左右各外扩 12pt（不纵向外扩，避免盖住菜单栏下方内容区）。
 /// - 状态机：idle →(悬停延时 / 单击热区)→ visible；visible 时指针在 (热区∪面板)外扩内
-///   保活，移出 200ms 宽限收起；区域外任意 mouseDown 收起；Esc 收起；Space 切换 /
+///   保活，移出后按悬停延时（notchHoverDelayMs）延迟收起；区域外任意 mouseDown 收起；Esc 收起；Space 切换 /
 ///   锁屏睡眠 / 屏幕配置变化全局收起。
 /// - 无刘海屏静默不生效（合盖再开屏、屏幕配置变化时重新探测）；
 ///   `ZEROFLOW_NOTCH_FAKE=1` 在主屏合成伪刘海便于调试，`ZEROFLOW_NOTCH_DEBUG=1` 输出决策日志。
@@ -27,8 +27,10 @@ final class NotchHotspotController {
 
     /// 热区对刘海的左右外扩
     private static let hotspotMargin: CGFloat = 12
-    /// visible 后移出 热区∪面板(外扩) 的隐藏宽限（s）：给鼠标移向面板留时间
-    private static let hideGrace: TimeInterval = 0.2
+    /// 悬停延时（s）：弹出等待与移出后的收起等待共用同一设置 notchHoverDelayMs
+    private static var configuredDelay: TimeInterval {
+        TimeInterval(max(50, SettingsStore.shared.notchHoverDelayMs)) / 1000.0
+    }
     /// 保活判定对 热区/面板 的外扩：吞掉两者之间的缝隙，慢速移动不掉出保活区
     private static let keepAliveInset: CGFloat = 6
     /// move 事件处理节流间隔（s）：几何判定足够快，但没必要每个 HID 事件都跑
@@ -44,7 +46,7 @@ final class NotchHotspotController {
     private var phase: Phase = .idle
     /// show 工作代数：悬停调度/单击开启时递增，使旧 show 作废
     private var showGen = 0
-    /// 宽限隐藏代数：回到保活区即取消；与 showGen 分开避免互相误杀
+    /// 延迟隐藏代数：回到保活区即取消；与 showGen 分开避免互相误杀
     private var hideGen = 0
     /// 已调度、尚未触发的悬停 show 代数（防同一停留重复调度；移出热区即作废）
     private var pendingShowGen: Int?
@@ -55,7 +57,7 @@ final class NotchHotspotController {
     private var lastMousePoint = CGPoint.zero
     private var lastMoveProcessedAt = CFTimeInterval(0)
     /// 收起后的重弹抑制：面板被 Esc/点击外部等收起后，若指针仍留在热区内，
-    /// 悬停不会再弹，直到指针离开热区（否则按 Esc 面板立刻 200ms 后重弹）
+    /// 悬停不会再弹，直到指针离开热区（否则按 Esc 面板立刻在一个悬停延时后重弹）
     private var suppressReshow = false
 
     // 主线程专用
@@ -296,14 +298,14 @@ final class NotchHotspotController {
             }
 
         case .visible:
-            // 显示中：仍在 (热区∪面板)外扩 内 → 保活；移出 → 200ms 宽限隐藏
+            // 显示中：仍在 (热区∪面板)外扩 内 → 保活；移出 → 按悬停延时延迟隐藏
             var inside = false
             if hotspot.insetBy(dx: -Self.keepAliveInset, dy: -Self.keepAliveInset).contains(point) { inside = true }
             if let panelFrame, panelFrame.insetBy(dx: -Self.keepAliveInset, dy: -Self.keepAliveInset).contains(point) { inside = true }
             if inside {
                 bumpHideGen()
             } else {
-                scheduleHideAfterGrace()
+                scheduleHideAfterDelay()
             }
         }
     }
@@ -342,21 +344,21 @@ final class NotchHotspotController {
 
     // MARK: - 调度
 
-    /// 保活：取消待触发的宽限隐藏（不动在途 show）
+    /// 保活：取消待触发的延迟隐藏（不动在途 show）
     private func bumpHideGen() {
         lock.lock()
         hideGen += 1
         lock.unlock()
     }
 
-    /// 宽限隐藏：移出 热区∪面板(外扩) 200ms 后仍 visible 且无在途 show 才真正隐藏。
+    /// 延迟隐藏：移出 热区∪面板(外扩) 一个悬停延时后仍 visible 且无在途 show 才真正隐藏。
     /// 期间回到保活区（bumpHideGen）或调度了新 show 都会取消。
-    private func scheduleHideAfterGrace() {
+    private func scheduleHideAfterDelay() {
         lock.lock()
         hideGen += 1
         let gen = hideGen
         lock.unlock()
-        workQueue.asyncAfter(deadline: .now() + Self.hideGrace) { [weak self] in
+        workQueue.asyncAfter(deadline: .now() + Self.configuredDelay) { [weak self] in
             guard let self else { return }
             self.lock.lock()
             let live = gen == self.hideGen && self.phase == .visible && self.pendingShowGen == nil
@@ -379,7 +381,7 @@ final class NotchHotspotController {
         pendingShowGen = gen
         phase = .pending
         lock.unlock()
-        let delay = TimeInterval(max(50, SettingsStore.shared.notchHoverDelayMs)) / 1000.0
+        let delay = Self.configuredDelay
         workQueue.asyncAfter(deadline: .now() + delay) { [weak self] in
             guard let self else { return }
             self.lock.lock()

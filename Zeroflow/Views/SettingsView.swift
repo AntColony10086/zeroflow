@@ -344,7 +344,7 @@ struct SettingsView: View {
                         Slider(value: Binding(
                             get: { Double(store.notchMaxWidth) },
                             set: { store.notchMaxWidth = Int($0) }
-                        ), in: 420...1200, step: 10)
+                        ), in: 200...1200, step: 10)
                     }
                     VStack(alignment: .leading, spacing: 6) {
                         LabeledContent(L10n.tr("最大高度")) {
@@ -355,12 +355,12 @@ struct SettingsView: View {
                         Slider(value: Binding(
                             get: { Double(store.notchMaxHeight) },
                             set: { store.notchMaxHeight = Int($0) }
-                        ), in: 240...1000, step: 20)
+                        ), in: 100...1000, step: 20)
                     }
                 } header: {
                     Text(L10n.tr("选项"))
                 } footer: {
-                    Text(L10n.tr("鼠标停留在刘海区域多久后弹出面板；单击刘海区域可立即弹出。显示 2 个内容模块时面板固定为最大尺寸（两卡片各占一半宽度），单模块时按内容收缩；内容超出面板时整体等比缩小以完整显示。"))
+                    Text(L10n.tr("鼠标停留在刘海区域多久后弹出面板；单击刘海区域可立即弹出，移出后同样按此时长延迟收起。显示 2 个内容模块时面板固定为最大尺寸（两卡片各占一半宽度），单模块时按内容收缩；内容超出面板时整体等比缩小以完整显示。"))
                 }
 
                 Section {

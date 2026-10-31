@@ -34,7 +34,7 @@
 ```bash
 cd zeroflow
 xcodebuild -project Zeroflow.xcodeproj -scheme Zeroflow \
-  -configuration Debug -derivedDataPath build build
+  -configuration Release -derivedDataPath build build
 
 open build/Build/Products/Debug/Zeroflow.app
 ```
