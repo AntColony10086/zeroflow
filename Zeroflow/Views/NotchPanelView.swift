@@ -246,8 +246,6 @@ struct NotchContentView: View {
     var modulesOverride: Module? = nil
     /// 测量时指定列宽；nil = 按自然宽/拉伸规则
     var columnWidthOverride: CGFloat? = nil
-    /// 测量系统资源卡拉伸高度时指定列高；nil = 按自然高
-    var columnHeightOverride: CGFloat? = nil
     /// 测量日历卡日程列表的最大高度；nil = 不限制（渲染时靠面板高度约束滚动）
     var dayListMaxHeight: CGFloat? = nil
     /// 测量日历卡固定部分高度时收起日程列表（只留选中日标题）
@@ -268,26 +266,29 @@ struct NotchContentView: View {
 
     private let accent = Color.accentColor
     private static let columns = Array(repeating: GridItem(.flexible(), spacing: 0), count: 7)
-    /// 面板内容内边距（测量与尺寸决策共用）
-    static let outerHPadding: CGFloat = 12
-    static let outerVPadding: CGFloat = 12
+    /// 面板内容内边距（测量与尺寸决策共用）；水平方向 = 卡片到面板「可见」边缘的留白
+    /// （遮罩左右侧墙还会内缩，NotchPanel 算面板宽时会额外补上）
+    static let outerHPadding: CGFloat = 16
+    static let outerVPadding: CGFloat = 16
+    /// 水平可见外边距：不小于刘海高度（留白至少一个刘海高）
+    static func outerHMargin(notchHeight: CGFloat) -> CGFloat {
+        max(outerHPadding, notchHeight)
+    }
     /// 顶部条与内容卡槽的间距（渲染与尺寸决策共用）
-    static let switcherGap: CGFloat = 4
+    static let switcherGap: CGFloat = 8
     /// 顶部条样式：药丸与刘海边缘的间距 / 药丸间距 / 药丸高
     private static let switcherInset: CGFloat = 8
     private static let pillGap: CGFloat = 6
     private static let pillHeight: CGFloat = 18
-    /// 卡片竖直内边距（各模块一致；日历/正在播放的水平内边距也用此值）
+    /// 卡片水平内边距（测量与尺寸决策共用：卡片宽 = 内容列宽 + 2×该值）
     static let cardPadding: CGFloat = 10
-    /// 卡片水平内边距 = 资源行小卡边缘到模块卡片边缘的距离：资源卡贴边更紧，其余模块常规留白
-    static func cardHPadding(for module: Module) -> CGFloat {
-        module == .resources ? 2 : cardPadding
-    }
+    /// 卡片竖直内边距：比水平略紧，日历/资源/音乐共用
+    static let cardVPadding: CGFloat = 6
     private static let cardRadius: CGFloat = 14
-    /// 日历列自然宽度：与月历固定部分高度（约 310–345）相近，卡片大致呈正方形
+    /// 日历列自然宽度：卡片约 320 宽；固定部分高约 229–252（间距已收紧），卡片宽于高
     private static let calendarColumnWidth: CGFloat = 300
-    /// 系统资源列自然宽度
-    private static let resourcesColumnWidth: CGFloat = 224
+    /// 系统资源列自然宽度：两列主要项环（CPU/内存）与三列次要项各有足够宽度
+    private static let resourcesColumnWidth: CGFloat = 248
     /// 正在播放列自然宽度
     private static let musicColumnWidth: CGFloat = 224
 
@@ -301,8 +302,8 @@ struct NotchContentView: View {
     }
 
     /// 卡片内宽（卡片宽 − 左右内边距）：渲染列宽与内容测量共用同一口径
-    static func columnWidth(for module: Module, cardWidth: CGFloat) -> CGFloat {
-        max(1, cardWidth - cardHPadding(for: module) * 2)
+    static func columnWidth(forCardWidth cardWidth: CGFloat) -> CGFloat {
+        max(1, cardWidth - cardPadding * 2)
     }
 
     /// 内容模块（固定顺序；一次只显示一个，可全部启用，靠顶部药丸切换）
@@ -347,7 +348,6 @@ struct NotchContentView: View {
     /// （资源卡按指定列高拉伸）；dayListMaxHeight / collapseDayEvents 用于日历卡的全高/固定高两档。
     static func measureCardSize(module: Module,
                                 columnWidth: CGFloat?,
-                                columnHeight: CGFloat? = nil,
                                 dayListMaxHeight: CGFloat? = nil,
                                 collapseDayEvents: Bool = false,
                                 compact: Bool = false,
@@ -355,7 +355,6 @@ struct NotchContentView: View {
         let view = NotchContentView(model: model,
                                     modulesOverride: module,
                                     columnWidthOverride: columnWidth,
-                                    columnHeightOverride: columnHeight,
                                     dayListMaxHeight: dayListMaxHeight,
                                     collapseDayEvents: collapseDayEvents,
                                     compactMode: compact)
@@ -368,20 +367,28 @@ struct NotchContentView: View {
     @ViewBuilder private var measureBody: some View {
         let module = modulesOverride ?? .calendar
         moduleView(module)
-            .padding(.horizontal, Self.cardHPadding(for: module))
-            .padding(.vertical, Self.cardPadding)
+            .padding(.horizontal, Self.cardPadding)
+            .padding(.vertical, Self.cardVPadding)
             .background(cardBackground)
     }
 
-    /// 正式渲染：顶部条 + 内容卡槽（刘海以下区域），底部留面板内边距
+    /// 正式渲染：顶部条 + 内容卡槽（刘海以下区域），底部留可见外边距
     private var renderBody: some View {
         VStack(spacing: Self.switcherGap) {
             moduleSwitcher
             contentSlot
         }
-        .padding(.horizontal, Self.outerHPadding)
+        .padding(.horizontal, outerInset)
         .padding(.bottom, Self.outerVPadding)
         .frame(width: displayWidth, height: displayHeight, alignment: .top)
+    }
+
+    /// 渲染时的左右内边距 = (面板宽 − 卡片宽) / 2（已含遮罩侧墙内缩，保证卡片与可见边缘留白）；
+    /// 屏幕宽度钳制时退回基础外边距
+    private var outerInset: CGFloat {
+        let base = Self.outerHMargin(notchHeight: notchHeight)
+        guard let displayWidth else { return base }
+        return max(base, (displayWidth - cardSize.width) / 2)
     }
 
     @ViewBuilder private var contentSlot: some View {
@@ -390,7 +397,7 @@ struct NotchContentView: View {
         } else {
             // 空状态：卡片固定尺寸（内容只有一行提示+按钮，缩成小条不好点）
             emptyState
-                .padding(.vertical, Self.cardPadding)
+                .padding(.vertical, Self.cardVPadding)
                 .frame(width: max(1, cardSize.width), height: max(1, cardSize.height))
                 .background(cardBackground)
                 .frame(height: cardSlotHeight)
@@ -398,10 +405,10 @@ struct NotchContentView: View {
     }
 
     /// 正式渲染时的列宽：卡片内宽（宽度方向不额外缩放，内容按此重排）
-    private func effectiveColumnWidth(_ natural: CGFloat, module: Module) -> CGFloat {
+    private func effectiveColumnWidth(_ natural: CGFloat) -> CGFloat {
         if let override = columnWidthOverride { return max(1, override) }
         guard displayWidth != nil else { return natural }
-        return Self.columnWidth(for: module, cardWidth: cardSize.width)
+        return Self.columnWidth(forCardWidth: cardSize.width)
     }
 
     @ViewBuilder private func moduleView(_ module: Module) -> some View {
@@ -422,8 +429,8 @@ struct NotchContentView: View {
     /// （scale 缩的是视觉尺寸，布局高度仍钉在内容高）
     private func renderedCard(_ module: Module) -> some View {
         moduleView(module)
-            .padding(.horizontal, Self.cardHPadding(for: module))
-            .padding(.vertical, Self.cardPadding)
+            .padding(.horizontal, Self.cardPadding)
+            .padding(.vertical, Self.cardVPadding)
             .frame(height: max(1, cardContentHeight), alignment: .center)
             .scaleEffect(cardScale, anchor: .center)
             .frame(width: max(1, cardSize.width), height: max(1, cardSize.height), alignment: .center)
@@ -485,7 +492,7 @@ struct NotchContentView: View {
     }
 
     private var calendarColumn: some View {
-        VStack(spacing: compactMode ? 4 : 10) {
+        VStack(spacing: compactMode ? 4 : 5) {
             header
             weekdayRow
             monthGrid
@@ -495,7 +502,7 @@ struct NotchContentView: View {
                 daySection
             }
         }
-        .frame(width: effectiveColumnWidth(Self.calendarColumnWidth, module: .calendar))
+        .frame(width: effectiveColumnWidth(Self.calendarColumnWidth))
     }
 
     private var emptyState: some View {
@@ -514,91 +521,166 @@ struct NotchContentView: View {
 
     // MARK: - 系统资源模块
 
-    /// 资源行拉伸条件：测量时指定列高，或正式渲染（行均匀填满卡片内容高）
-    private var stretchResourceRows: Bool { columnHeightOverride != nil || displayWidth != nil }
+    /// 资源卡分块尺寸：上半块（主要项 CPU/内存 环形仪表）与下半块（次要项 GPU/磁盘/网络）
+    /// 等高——卡片整体保持长方形，下半块才有空间放速率趋势线；上下两块之间一条细分隔线。
+    private static let resourceHalfHeight: CGFloat = 88
+    private static let resourceCellGap: CGFloat = 8
+    private static let resourceHalfDividerGap: CGFloat = 7
+    private static let primaryRingSize: CGFloat = 56
+    private static let primaryRingLineWidth: CGFloat = 5.5
+    private static let secondaryRingSize: CGFloat = 40
+    private static let secondaryRingLineWidth: CGFloat = 3.5
+    /// 下半块单元格内容块固定高：GPU 小环与「两行速率 + 趋势线」等高，三格标签才能对齐同一水平线
+    private static let secondaryContentHeight: CGFloat = 44
+    private static let resourceSparklineHeight: CGFloat = 16
 
-    private var resourcesColumn: some View {
-        VStack(alignment: .leading, spacing: compactMode ? 4 : 8) {
-            moduleHeader("cpu", L10n.tr("系统资源"))
-            ForEach(enabledResourceItems, id: \.self) { item in
-                resourceRow(item)
-            }
-        }
-        .frame(width: effectiveColumnWidth(Self.resourcesColumnWidth, module: .resources))
-        .frame(height: columnHeightOverride)
+    /// 主要项（环形仪表，占上半块）：固定顺序 CPU → 内存
+    private var primaryResourceItems: [NotchResourceItem] {
+        enabledResourceItems.filter { $0 == .cpu || $0 == .memory }
     }
 
-    /// 单条资源 = 半透明圆角小卡。常规密度：第一行 标题+进度条/sparkline（条弹性填满剩余宽），
-    /// 第二行 数值独占一行（数值不与条同行挤占宽度，条可占满行宽）；
-    /// 紧凑密度：标题、条、数值合并单行，行高 ~24pt，卡片高受限时自然高≈卡内高、避免整体缩放。
-    private func resourceRow(_ item: NotchResourceItem) -> some View {
-        Group {
+    /// 次要项（占下半块）：固定顺序 GPU → 磁盘 → 网络
+    private var secondaryResourceItems: [NotchResourceItem] {
+        enabledResourceItems.filter { $0 == .gpu || $0 == .disk || $0 == .network }
+    }
+
+    /// 系统资源卡：上半块 = CPU/内存 环形仪表各占 1/4（共半块），下半块 = 其余三项均分；
+    /// 某一半没有启用项时整块隐藏，卡片退回单块高度；紧凑密度（屏幕极矮兜底）= 每项单行。
+    private var resourcesColumn: some View {
+        let inner = effectiveColumnWidth(Self.resourcesColumnWidth)
+        let primary = primaryResourceItems
+        let secondary = secondaryResourceItems
+        return VStack(alignment: .leading, spacing: 0) {
+            moduleHeader("cpu", L10n.tr("系统资源"))
+                .padding(.bottom, compactMode ? 4 : Self.resourceHalfDividerGap)
             if compactMode {
-                HStack(spacing: 6) {
-                    Text(item.title)
-                        .font(.system(size: 11))
-                        .foregroundColor(.secondary)
-                        .lineLimit(1)
-                    resourceMeter(item)
-                        .frame(maxWidth: .infinity)
-                        .frame(height: 10)
-                    Text(resourceValue(item))
-                        .font(.system(size: 11, weight: .medium))
-                        .monospacedDigit()
-                        .lineLimit(1)
+                VStack(alignment: .leading, spacing: 4) {
+                    ForEach(enabledResourceItems, id: \.self) { item in
+                        compactResourceRow(item, width: inner)
+                    }
                 }
             } else {
-                VStack(alignment: .leading, spacing: 4) {
-                    HStack(spacing: 8) {
-                        Text(item.title)
-                            .font(.system(size: 12))
-                            .foregroundColor(.secondary)
-                            .lineLimit(1)
-                        resourceMeter(item)
-                            .frame(maxWidth: .infinity)
-                            .frame(height: 16)
-                    }
-                    Text(resourceValue(item))
-                        .font(.system(size: 12, weight: .medium))
-                        .monospacedDigit()
-                        .lineLimit(1)
-                        .minimumScaleFactor(0.8)
-                        .frame(maxWidth: .infinity, alignment: .leading)
+                if !primary.isEmpty {
+                    resourceHalf(items: primary, inner: inner,
+                                 cell: { primaryResourceCell($0, width: $1) })
+                }
+                if !primary.isEmpty && !secondary.isEmpty {
+                    Rectangle()
+                        .fill(Color.primary.opacity(0.06))
+                        .frame(height: 0.5)
+                        .padding(.vertical, Self.resourceHalfDividerGap)
+                }
+                if !secondary.isEmpty {
+                    resourceHalf(items: secondary, inner: inner,
+                                 cell: { secondaryResourceCell($0, width: $1) })
                 }
             }
         }
-        // 拉伸时各行平分剩余高度（标题固定顶部），行内内容垂直居中；
-        // 背景包在拉伸 frame 外，小卡填满分到的整块高度
-        .frame(maxHeight: stretchResourceRows ? .infinity : nil)
-        .padding(.horizontal, 8)
-        .padding(.vertical, compactMode ? 5 : 6)
-        .background(resourceRowBackground)
+        .frame(width: inner)
     }
 
-    /// 行内计量图：百分比项（CPU/内存/GPU）= 用量进度条；速率项（磁盘/网络）= 迷你趋势图
-    @ViewBuilder private func resourceMeter(_ item: NotchResourceItem) -> some View {
-        if isPercentItem(item) {
-            ResourceProgressBar(progress: normalizedProgress(item))
-        } else {
-            ResourceSparkline(normalizedValues: normalizedHistory(item))
+    /// 半块内的单元格均分：n 格按内宽等分，单个格子不铺满整行（与多格观感一致）
+    private func resourceCellWidth(count: Int, inner: CGFloat) -> CGFloat {
+        let n = max(1, count)
+        guard n > 1 else { return min(inner, Self.primaryRingSize * 2.4) }
+        return (inner - Self.resourceCellGap * CGFloat(n - 1)) / CGFloat(n)
+    }
+
+    private func resourceHalf<Cell: View>(items: [NotchResourceItem], inner: CGFloat,
+                                          @ViewBuilder cell: @escaping (NotchResourceItem, CGFloat) -> Cell) -> some View {
+        let width = resourceCellWidth(count: items.count, inner: inner)
+        return HStack(spacing: Self.resourceCellGap) {
+            ForEach(items, id: \.self) { item in
+                cell(item, width)
+            }
         }
+        .frame(width: inner)
     }
 
-    /// 资源行小卡背景：半透明圆角，叠在模块卡片底色上区分各项
-    private var resourceRowBackground: some View {
-        RoundedRectangle(cornerRadius: 8, style: .continuous)
-            .fill(Color.primary.opacity(0.06))
-    }
-
-    /// 百分比项（CPU/内存/GPU）用进度条展示用量占比；磁盘/网络为速率无固定满格，走趋势图
-    private func isPercentItem(_ item: NotchResourceItem) -> Bool {
-        switch item {
-        case .cpu, .memory, .gpu: return true
-        case .disk, .network: return false
+    /// 主要项单元格：环形仪表（环心 = 百分比）+ 名称 + 副信息（CPU 核心数 / 内存 已用-总量）
+    private func primaryResourceCell(_ item: NotchResourceItem, width: CGFloat) -> some View {
+        VStack(spacing: 3) {
+            ResourceRing(progress: normalizedProgress(item),
+                         text: percentText(item),
+                         size: Self.primaryRingSize,
+                         lineWidth: Self.primaryRingLineWidth,
+                         fontSize: 15)
+            Text(item.title)
+                .font(.system(size: 11))
+                .foregroundColor(.secondary)
+                .lineLimit(1)
+            Text(primaryDetail(item))
+                .font(.system(size: 10, weight: .medium))
+                .monospacedDigit()
+                .foregroundColor(.secondary)
+                .lineLimit(1)
+                .minimumScaleFactor(0.75)
         }
+        // minHeight 而非固定高：内容永远不被迫溢出，两块等高至少各占半块
+        .frame(width: width)
+        .frame(minHeight: Self.resourceHalfHeight)
     }
 
-    /// 百分比项当前用量 0–1；nil = 暂不可用（只显示空轨道，数值列同步显示「—」）
+    /// 次要项单元格：标签置顶（三格对齐同一基线）——GPU = 小环；磁盘/网络 = 两行速率 + 趋势线
+    private func secondaryResourceCell(_ item: NotchResourceItem, width: CGFloat) -> some View {
+        VStack(spacing: 3) {
+            Text(item.title)
+                .font(.system(size: 10))
+                .foregroundColor(.secondary)
+                .lineLimit(1)
+            Group {
+                if item == .gpu {
+                    ResourceRing(progress: normalizedProgress(item),
+                                 text: percentText(item),
+                                 size: Self.secondaryRingSize,
+                                 lineWidth: Self.secondaryRingLineWidth,
+                                 fontSize: 10)
+                } else {
+                    VStack(spacing: 2) {
+                        let lines = rateLines(item)
+                        Text(lines.read)
+                            .font(.system(size: 9.5, weight: .medium))
+                            .monospacedDigit()
+                            .lineLimit(1)
+                            .minimumScaleFactor(0.8)
+                        Text(lines.write)
+                            .font(.system(size: 9.5, weight: .medium))
+                            .monospacedDigit()
+                            .lineLimit(1)
+                            .minimumScaleFactor(0.8)
+                        ResourceSparkline(normalizedValues: normalizedHistory(item))
+                            .frame(height: Self.resourceSparklineHeight)
+                    }
+                    .foregroundColor(.primary.opacity(0.9))
+                }
+            }
+            .frame(height: Self.secondaryContentHeight)
+        }
+        .frame(width: width)
+        .frame(minHeight: Self.resourceHalfHeight)
+    }
+
+    /// 紧凑密度兜底（屏幕极矮）：每项单行「图标 名称 … 数值」，无环、无趋势线
+    private func compactResourceRow(_ item: NotchResourceItem, width: CGFloat) -> some View {
+        HStack(spacing: 5) {
+            Image(systemName: item.symbol)
+                .font(.system(size: 9))
+                .foregroundColor(.secondary)
+            Text(item.title)
+                .font(.system(size: 10))
+                .foregroundColor(.secondary)
+                .lineLimit(1)
+            Spacer(minLength: 4)
+            Text(compactValue(item))
+                .font(.system(size: 10, weight: .medium))
+                .monospacedDigit()
+                .lineLimit(1)
+                .minimumScaleFactor(0.8)
+        }
+        .frame(width: width)
+    }
+
+    /// 百分比项当前用量 0–1；nil = 暂不可用（只显示空轨道，环心同步显示「—」）
     private func normalizedProgress(_ item: NotchResourceItem) -> Double? {
         let s = resources.sample
         switch item {
@@ -611,44 +693,71 @@ struct NotchContentView: View {
         }
     }
 
-    /// 迷你趋势图数据（现仅速率项 磁盘/网络 消费）：速率项按窗口内峰值归一化（峰值下限 200KB/s 防除零全矮）
+    /// 迷你趋势图数据（仅速率项 磁盘/网络）：按窗口内峰值归一化（峰值下限 200KB/s 防除零全矮）
     private func normalizedHistory(_ item: NotchResourceItem) -> [Double] {
-        func normalize(_ values: [Double], scale: Double) -> [Double] {
-            values.map { min(1, max(0, $0 / scale)) }
-        }
         let h = resources.history
+        let raw: [Double]
         switch item {
-        case .cpu: return normalize(h.cpu, scale: 100)
-        case .memory: return normalize(h.memory, scale: 100)
-        case .gpu: return normalize(h.gpu, scale: 100)
-        case .disk:
-            return normalize(h.disk, scale: max(h.disk.max() ?? 0, 200_000))
-        case .network:
-            return normalize(h.network, scale: max(h.network.max() ?? 0, 200_000))
+        case .disk: raw = h.disk
+        case .network: raw = h.network
+        default: return []
         }
+        let scale = max(raw.max() ?? 0, 200_000)
+        return raw.map { min(1, max(0, $0 / scale)) }
     }
 
     private var enabledResourceItems: [NotchResourceItem] {
         SettingsStore.shared.notchResourceItems.compactMap { NotchResourceItem(rawValue: $0) }
     }
 
-    private func resourceValue(_ item: NotchResourceItem) -> String {
+    /// 环形仪表环心文字：百分比项为用量百分比，速率项不进环
+    private func percentText(_ item: NotchResourceItem) -> String {
+        guard let progress = normalizedProgress(item) else { return "—" }
+        return String(format: "%.0f%%", min(1, max(0, progress)) * 100)
+    }
+
+    /// 主要项副信息：CPU = 核心数；内存 = 已用 / 总量
+    private func primaryDetail(_ item: NotchResourceItem) -> String {
         let s = resources.sample
         switch item {
         case .cpu:
-            return s.cpuPercent.map { String(format: "%.0f%%", $0) } ?? "—"
+            return "\(ProcessInfo.processInfo.processorCount) \(L10n.tr("核"))"
         case .memory:
             guard let used = s.memUsedBytes else { return "—" }
             guard let total = s.memTotalBytes else { return SystemResourceMonitor.formatBytes(used) }
             return "\(SystemResourceMonitor.formatBytes(used)) / \(SystemResourceMonitor.formatBytes(total))"
+        case .gpu, .disk, .network:
+            return ""
+        }
+    }
+
+    /// 速率项两行数值：磁盘 = 读/写，网络 = 下行/上行；任一方向有值即显示，双向都缺失显示「—」
+    private func rateLines(_ item: NotchResourceItem) -> (read: String, write: String) {
+        let s = resources.sample
+        switch item {
         case .disk:
-            let text = "\(L10n.tr("读")) \(SystemResourceMonitor.formatBps(s.diskReadBps)) · \(L10n.tr("写")) \(SystemResourceMonitor.formatBps(s.diskWriteBps))"
-            return (s.diskReadBps == nil && s.diskWriteBps == nil) ? "—" : text
+            guard s.diskReadBps != nil || s.diskWriteBps != nil else {
+                return ("\(L10n.tr("读")) —", "\(L10n.tr("写")) —")
+            }
+            return ("\(L10n.tr("读")) \(SystemResourceMonitor.formatBps(s.diskReadBps))",
+                    "\(L10n.tr("写")) \(SystemResourceMonitor.formatBps(s.diskWriteBps))")
         case .network:
-            let text = "↓ \(SystemResourceMonitor.formatBps(s.netDownBps)) · ↑ \(SystemResourceMonitor.formatBps(s.netUpBps))"
-            return (s.netDownBps == nil && s.netUpBps == nil) ? "—" : text
-        case .gpu:
-            return s.gpuPercent.map { String(format: "%.0f%%", $0) } ?? "—"
+            guard s.netDownBps != nil || s.netUpBps != nil else { return ("↓ —", "↑ —") }
+            return ("↓ \(SystemResourceMonitor.formatBps(s.netDownBps))",
+                    "↑ \(SystemResourceMonitor.formatBps(s.netUpBps))")
+        case .cpu, .memory, .gpu:
+            return ("—", "—")
+        }
+    }
+
+    /// 紧凑密度行数值：百分比项给百分比，速率项并成一行
+    private func compactValue(_ item: NotchResourceItem) -> String {
+        switch item {
+        case .cpu, .memory, .gpu:
+            return percentText(item)
+        case .disk, .network:
+            let lines = rateLines(item)
+            return "\(lines.read) · \(lines.write)"
         }
     }
 
@@ -666,7 +775,7 @@ struct NotchContentView: View {
                     .padding(.top, 2)
             }
         }
-        .frame(width: effectiveColumnWidth(Self.musicColumnWidth, module: .music))
+        .frame(width: effectiveColumnWidth(Self.musicColumnWidth))
     }
 
     private func musicBody(_ info: NowPlayingInfo) -> some View {
@@ -831,7 +940,7 @@ struct NotchContentView: View {
             Image(systemName: symbol)
                 .font(.system(size: compactMode ? 10 : 11, weight: .medium))
                 .foregroundColor(.secondary)
-                .frame(width: compactMode ? 14 : 20, height: compactMode ? 14 : 20)
+                .frame(width: compactMode ? 14 : 16, height: compactMode ? 14 : 16)
                 .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
@@ -849,12 +958,12 @@ struct NotchContentView: View {
     }
 
     private var monthGrid: some View {
-        LazyVGrid(columns: Self.columns, spacing: compactMode ? 2 : 4) {
+        LazyVGrid(columns: Self.columns, spacing: 2) {
             ForEach(Array(model.monthCells().enumerated()), id: \.offset) { _, cell in
                 if let date = cell {
                     dayCell(date)
                 } else {
-                    Color.clear.frame(height: compactMode ? 17 : 30)
+                    Color.clear.frame(height: compactMode ? 17 : 22)
                 }
             }
         }
@@ -873,16 +982,16 @@ struct NotchContentView: View {
                 .opacity(model.hasEvents(date) ? 1 : 0)
         }
         .frame(maxWidth: .infinity)
-        .frame(height: compactMode ? 17 : 30)
+        .frame(height: compactMode ? 17 : 22)
         .background {
             if selected {
                 Circle()
                     .fill(accent)
-                    .frame(width: compactMode ? 15 : 26, height: compactMode ? 15 : 26)
+                    .frame(width: compactMode ? 15 : 20, height: compactMode ? 15 : 20)
             } else if today {
                 Circle()
                     .strokeBorder(accent.opacity(0.7), lineWidth: 1)
-                    .frame(width: compactMode ? 15 : 26, height: compactMode ? 15 : 26)
+                    .frame(width: compactMode ? 15 : 20, height: compactMode ? 15 : 20)
             }
         }
         .contentShape(Rectangle())
@@ -895,7 +1004,7 @@ struct NotchContentView: View {
     /// 装不下就压缩到剩余空间内滚动（文字不缩放）；collapseDayEvents 仅用于测量
     /// 日历固定部分高度（收起列表，只留标题）
     @ViewBuilder private var daySection: some View {
-        VStack(alignment: .leading, spacing: compactMode ? 4 : 8) {
+        VStack(alignment: .leading, spacing: compactMode ? 4 : 6) {
             Text(model.selectedTitle)
                 .font(.system(size: compactMode ? 10 : 12, weight: .medium))
                 .foregroundColor(.secondary)
@@ -921,7 +1030,7 @@ struct NotchContentView: View {
                         .padding(.vertical, 6)
                 } else {
                     ScrollView(.vertical, showsIndicators: false) {
-                        VStack(alignment: .leading, spacing: 8) {
+                        VStack(alignment: .leading, spacing: 6) {
                             ForEach(model.dayEvents) { item in
                                 HStack(alignment: .top, spacing: 8) {
                                     RoundedRectangle(cornerRadius: 1.5)
@@ -949,24 +1058,37 @@ struct NotchContentView: View {
     }
 }
 
-/// 百分比资源项（CPU/内存/GPU）的用量进度条：灰色轨道 = 总量 100%（恒显完整宽度），
-/// 彩色填充 = 当前用量（左→右），一眼区分已用/未用
-private struct ResourceProgressBar: View {
+/// 资源项的环形仪表：灰色轨道 = 无用量参照，彩色弧 = 当前用量（自 12 点顺时针），
+/// 环心为数值文字（不可用时显示「—」）；用量变化做 0.4s 缓出插值（2s 采样不至于跳变）
+private struct ResourceRing: View {
     let progress: Double?
+    let text: String
+    let size: CGFloat
+    let lineWidth: CGFloat
+    let fontSize: CGFloat
 
     var body: some View {
-        GeometryReader { proxy in
-            ZStack(alignment: .leading) {
-                Capsule()
-                    .fill(Color.primary.opacity(0.25))
-                if let progress, progress > 0 {
-                    Capsule()
-                        .fill(Color.accentColor)
-                        .frame(width: proxy.size.width * min(1, max(0, progress)))
-                }
+        ZStack {
+            Circle()
+                .inset(by: lineWidth / 2)
+                .stroke(Color.primary.opacity(0.15), lineWidth: lineWidth)
+            if let progress, progress > 0.001 {
+                Circle()
+                    .inset(by: lineWidth / 2)
+                    .trim(from: 0, to: min(1, max(0, progress)))
+                    .stroke(Color.accentColor,
+                            style: StrokeStyle(lineWidth: lineWidth, lineCap: .round))
+                    .rotationEffect(.degrees(-90))
+                    .animation(.easeOut(duration: 0.4), value: progress)
             }
+            Text(text)
+                .font(.system(size: fontSize, weight: .semibold))
+                .monospacedDigit()
+                .lineLimit(1)
+                .minimumScaleFactor(0.7)
+                .padding(.horizontal, lineWidth + 1)
         }
-        .frame(height: 5)
+        .frame(width: size, height: size)
     }
 }
 
@@ -1021,8 +1143,9 @@ private struct ResourceSparkline: View {
 /// 悬停/点击/Esc 判定全部由 NotchHotspotController 的 listen-only tap 完成，
 /// 本面板只负责内容展示（不成为 key，无键盘交互）。
 ///
-/// 尺寸 = 内容自适应：卡片取模块自然尺寸（日历列宽 300，卡片 ≈ 320 宽、自然高 ≈ 310–345），
-/// 面板 = 卡片 + 内边距 + 顶部刘海条（仅保留屏幕边界，日程多时卡片向下生长、到上限后列表滚动）。
+/// 尺寸 = 内容自适应：卡片取模块自然尺寸（日历列宽 300，卡片 ≈ 320 宽、自然高 ≈ 229–252），
+/// 面板 = 卡片 + 可见外边距（水平 ≥ 刘海高、竖直 16，左右额外补遮罩侧墙内缩 ≈14）+ 顶部刘海条
+/// （仅保留屏幕边界，日程多时卡片向下生长、到上限后列表滚动）。
 /// 动画（NotchSpringAnimator 只驱动 frame，全程不透明：形状渐变本身就是全部视觉效果，
 /// 无透明度渐变，DEV-022）：
 /// - 展开两段连续：段1 横向拉到 80% 终宽（临界阻尼无回弹，高度停在迷你刘海高）→
@@ -1094,7 +1217,7 @@ final class NotchPanel: NSPanel {
     }
 
     /// 尺寸决策：面板尺寸随内容自适应——卡片取模块自然尺寸（宽 = 模块自然列宽 + 内边距，
-    /// 高 = 内容自然高），面板 = 卡片 + 两侧/底部内边距 + 顶部刘海条。
+    /// 高 = 内容自然高），面板 = 卡片 + 可见外边距（含遮罩侧墙内缩）+ 顶部刘海条。
     /// 仅保留屏幕边界：卡片高超过「屏幕高 − 80 − 刘海顶部条」时压缩（日历日程列表滚动 /
     /// 资源切紧凑密度 / 仍装不下才整体等比缩小）。
     private static func computeLayout(screen: NSScreen, notchSize: CGSize,
@@ -1104,7 +1227,9 @@ final class NotchPanel: NSPanel {
                               - notchSize.height
                               - NotchContentView.switcherGap
                               - NotchContentView.outerVPadding)
-        let maxCardW = max(1, screen.frame.width - 16 - NotchContentView.outerHPadding * 2)
+        // 面板宽还要给左右遮罩侧墙内缩（≈14）+ 可见外边距留余量
+        let hMargin = NotchContentView.outerHMargin(notchHeight: notchSize.height)
+        let maxCardW = max(1, screen.frame.width - 16 - hMargin * 2 - 32)
 
         // 空状态（无启用模块）：提示卡片固定尺寸（缩成小条不好点）
         guard let module else {
@@ -1113,7 +1238,7 @@ final class NotchPanel: NSPanel {
                                    notchSize: notchSize, screen: screen)
         }
 
-        let hPadding = NotchContentView.cardHPadding(for: module)
+        let hPadding = NotchContentView.cardPadding
         let cardW = min(NotchContentView.naturalColumnWidth(for: module) + hPadding * 2, maxCardW)
         let columnW = max(1, cardW - hPadding * 2)
 
@@ -1168,14 +1293,23 @@ final class NotchPanel: NSPanel {
                                notchSize: notchSize, screen: screen)
     }
 
-    /// 面板尺寸 = 卡片 + 内边距 + 顶部刘海条；宽高都钳制进屏幕，水平居中刘海
+    /// 面板尺寸 = 卡片 + 可见外边距 + 顶部刘海条；宽高都钳制进屏幕，水平居中刘海。
+    /// 遮罩的左右侧墙相对窗口边缘内缩（肩弧半径），可见黑边只剩内缩以外的部分，
+    /// 所以面板宽要把内缩额外补上，否则卡片会紧贴可见边缘。
     private static func makeLayout(card: CGSize, contentHeight: CGFloat, scale: CGFloat,
                                    compact: Bool, notchSize: CGSize, screen: NSScreen) -> PanelLayout {
-        let width = Self.clamp(card.width + NotchContentView.outerHPadding * 2,
-                               notchSize.width + 24, screen.frame.width - 16)
         let height = Self.clamp(card.height + notchSize.height
                                     + NotchContentView.switcherGap + NotchContentView.outerVPadding,
                                 notchSize.height + 8, screen.frame.height - 80)
+        // 侧墙内缩随面板宽变化（半径 ∝ 宽），迭代两次即收敛
+        let hMargin = NotchContentView.outerHMargin(notchHeight: notchSize.height)
+        var width = card.width + hMargin * 2
+        for _ in 0..<2 {
+            let sideInset = NotchShapeContainerView.sideInset(width: width, height: height,
+                                                              referenceWidth: notchSize.width)
+            width = card.width + (hMargin + sideInset) * 2
+        }
+        width = Self.clamp(width, notchSize.width + 24, screen.frame.width - 16)
         return PanelLayout(width: width, height: height, card: card,
                            contentHeight: contentHeight, scale: scale, compact: compact)
     }
@@ -1380,15 +1514,27 @@ private final class NotchShapeContainerView: NSView {
         updateMask()
     }
 
-    private func updateMask() {
-        let scale = bounds.width / referenceWidth
-        // 底角半径与顶部肩弧半径同源：随面板宽度相对刘海宽等比放大
-        let radius = min(NotchPanel.cornerBase * scale, bounds.height / 2)
+    /// 遮罩圆角：底角外凸圆角 + 顶部肩弧同源，半径随面板宽相对刘海宽等比放大
+    private static func radii(width: CGFloat, height: CGFloat,
+                              referenceWidth: CGFloat) -> (corner: CGFloat, shoulder: CGFloat) {
+        let scale = width / max(1, referenceWidth)
+        let corner = min(NotchPanel.cornerBase * scale, height / 2)
         // 肩弧不能吃掉整个高度/宽度
-        let shoulder = min(radius, bounds.height / 3, bounds.width / 6)
+        return (corner, min(corner, height / 3, width / 6))
+    }
+
+    /// 左右可见边缘相对窗口边缘的内缩量（= 顶部肩弧半径）：
+    /// 面板尺寸决策据此补足可见外边距，否则卡片会贴在遮罩侧墙上看不见留白
+    static func sideInset(width: CGFloat, height: CGFloat, referenceWidth: CGFloat) -> CGFloat {
+        radii(width: width, height: height, referenceWidth: referenceWidth).shoulder
+    }
+
+    private func updateMask() {
+        let radii = Self.radii(width: bounds.width, height: bounds.height,
+                               referenceWidth: referenceWidth)
         maskLayer.frame = bounds
         maskLayer.path = Self.notchShapePath(width: bounds.width, height: bounds.height,
-                                             cornerRadius: radius, shoulderRadius: shoulder)
+                                             cornerRadius: radii.corner, shoulderRadius: radii.shoulder)
     }
 
     /// 刘海形路径（层坐标 y 向上）：

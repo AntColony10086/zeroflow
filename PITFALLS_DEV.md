@@ -140,9 +140,19 @@
 ## DEV-028: 灵动岛「面板尺寸随内容自适应」时,测量口径必须与渲染口径一致
 - **Pitfall:** 面板尺寸由内容决定后,沿用旧的测量口径(资源卡传 `columnHeight` 把行拉伸到槽高、渲染端 `.frame(maxWidth: .infinity)` 拉伸列宽)会量出「槽高/槽宽」而不是自然尺寸,面板永远缩不回去;卡片 `contentHeight` 若按「不含内边距」传给渲染端,`padding → .frame(height:)` 会让内容比测量值少 20pt 被压扁。
 - **Cause:** 同一个 SwiftUI 视图在「测量」与「渲染」两条路径复用,列宽/列高/拉伸开关只是参数——测量时传值等于强制几何,不是「上限」;`.padding().frame(height:)` 的 frame 高度包含 padding。
-- **Prevention:** 自然尺寸测量不传拉伸参数(资源行测自然高、列宽用 `naturalColumnWidth(for:)`);渲染列宽取卡片内宽硬值,去掉 `maxWidth: .infinity`;卡片渲染顺序为 `内容 → .frame(height: contentHeight) → .scaleEffect(scale) → .frame(cardW, cardH) → .background(卡片底) → .frame(height: 槽高)`(background/外层 frame 在 scale 之后,缩放只作用于内容、背景始终是卡片框)。`contentHeight` 与测量值同为「含卡片内边距」,缩放系数 = `min(1, cardH / contentHeight)`,宽度方向只重排不缩放。面板宽高 = 卡片 + 内边距 + 顶部刘海条,只有屏幕边界(高 −80)兜底:`refit` 的比较项必须包含面板/卡片宽高与内容高,否则日程异步加载后尺寸不更新。参考 `NotchPanel.computeLayout` / `NotchContentView.renderedCard`。
+- **Prevention:** 自然尺寸测量不传拉伸参数(资源行测自然高、列宽用 `naturalColumnWidth(for:)`);渲染列宽取卡片内宽硬值,去掉 `maxWidth: .infinity`;卡片渲染顺序为 `内容 → .frame(height: contentHeight) → .scaleEffect(scale) → .frame(cardW, cardH) → .background(卡片底) → .frame(height: 槽高)`(background/外层 frame 在 scale 之后,缩放只作用于内容、背景始终是卡片框)。`contentHeight` 与测量值同为「含卡片内边距」,缩放系数 = `min(1, cardH / contentHeight)`,宽度方向只重排不缩放。面板宽高 = 卡片 + 可见外边距 + 顶部刘海条,只有屏幕边界(高 −80)兜底;左右留白还要把「遮罩侧墙相对窗口边缘的内缩」算进面板宽(肩弧半径 ∝ 面板宽,需迭代收敛),否则卡片会正好填满可见黑边、看起来没有外边距。`refit` 的比较项必须包含面板/卡片宽高与内容高,否则日程异步加载后尺寸不更新。参考 `NotchPanel.computeLayout` / `NotchContentView.renderedCard`。
 
 ## DEV-029: 可见面板按内容改尺寸必须走弹簧,并同步控制器的命中区域
 - **Pitfall:** 面板尺寸随内容自适应后,切换模块 / 日程异步加载(refit)需要改窗口尺寸:若直接 `setFrame` 或只换 contentView 不改窗口,会出现尺寸瞬跳(DEV-023 的整块平移感)或内容与黑底不匹配;控制器缓存的 `panelFrameTL` 若不同步,「点击面板外收起 / 移出保活」仍按旧尺寸判定,窄面板外的大片区域会误收起或点不到。
 - **Cause:** `panelFrameTL` 只在 present 时写入;窗口尺寸的权威值在弹簧里逐帧变化,而命中判定使用弹簧终点 `targetFrame`。
 - **Prevention:** switchModule / refit 后统一走 `applyLayoutFrame`(重建 contentView + `springAnimator.animate(to: 新终 frame)`),并由控制器在调用后 `syncPanelFrame()` 用 `panel.targetFrame` 刷新 `panelFrameTL`;任何可见路径都不得直接 `setFrame`(仅窗口不可见时的首次展开定位可用)。参考 `NotchPanel.applyLayoutFrame` / `NotchHotspotController.syncPanelFrame`。
+
+## DEV-030: 卡片内固定高度的「半块」用 `.frame(height:)` 会静默裁切/溢出
+- **Pitfall:** 资源卡按「上下两块等高」排版时,给单元格写死 `.frame(width:height: 88)`;实际内容(环 56 + 两行文字)是 88.x 高,SwiftUI 不裁切也不报错——内容在固定 frame 里居中溢出,压到分隔线/下半块上,而 `fittingSize` 仍是 88,测量脚本看不出问题(只有「只启用主要项」那张卡量出 123 而不是 122 才暴露)。
+- **Cause:** 固定高度 frame 只是布局约束,不约束绘制;测量口径与真实内容高被 frame 截断,偏差被掩盖。
+- **Prevention:** 等高块用 `.frame(minHeight: X)` 而不是 `.frame(height: X)`:两块仍至少各占半块,内容更高时自然长高、测量同步反映;改完用「只开单项 / 全开」两种组合各量一次高度,差值应符合预期(半块缺失应少一整块的高度)。
+
+## DEV-031: 环形容器 `Circle().stroke` 的描边会溢出 frame
+- **Pitfall:** 直接用 `Circle().stroke(lineWidth:)` 画环,描边以路径为中心向内外各占一半,细看环外侧被相邻视图裁掉一条(尤其放在固定 `frame(width:height:)` 的角落或卡片边缘时)。
+- **Cause:** `Circle()` 的路径内切于 frame,`stroke` 默认居中描边,半径不足时超出边界。
+- **Prevention:** 先 `.inset(by: lineWidth / 2)` 再 `.stroke`(环心文字同理加 `lineWidth` 级内边距),这样描边完整落在 frame 内。参考 `ResourceRing`。
