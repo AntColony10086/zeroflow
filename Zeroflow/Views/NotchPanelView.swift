@@ -1016,7 +1016,7 @@ private struct ResourceSparkline: View {
 final class NotchPanel: NSPanel {
     /// 圆角基准：刘海宽 180pt 时的目测半径（四角同半径），随面板宽度相对刘海宽等比放大
     static let referenceNotchWidth: CGFloat = 180
-    static let cornerBase: CGFloat = 14
+    static let cornerBase: CGFloat = 7
     /// 迷你刘海相对真刘海的内缩（左右/底部；顶边贴屏幕顶）
     static let startInset: CGFloat = 6
     /// 段1 横向目标宽度比例（终宽的 80%），到位前以 handoff 无缝续接剩余横向+纵向
