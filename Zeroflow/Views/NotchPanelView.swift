@@ -996,7 +996,8 @@ private struct ResourceSparkline: View {
 }
 
 /// 灵动岛面板：非激活 borderless 面板，纯黑底，形状 = 「刘海形」：
-/// 顶边贴屏幕顶（盖住真刘海）、四角圆角（顶角小、底角大），圆角随面板宽度相对
+/// 顶边贴屏幕顶（盖住真刘海）、顶部两角内凹肩（向面板体内扣，与屏幕顶边融合成
+/// 「放大版刘海」的肩部）、底部两角外凸圆角，半径随面板宽度相对
 /// 刘海宽等比放大（始终像「放大版刘海」）。
 /// 悬停/点击/Esc 判定全部由 NotchHotspotController 的 listen-only tap 完成，
 /// 本面板只负责内容展示（不成为 key，无键盘交互）。
@@ -1013,7 +1014,7 @@ private struct ResourceSparkline: View {
 /// 起点/收起终点的迷你刘海 = 比真刘海小一圈（顶边贴屏幕顶、左右/底各内缩），
 /// 完全藏在刘海硬件后不可见。
 final class NotchPanel: NSPanel {
-    /// 圆角基准：刘海宽 180pt 时顶角/底角的目测半径，随面板宽度等比放大
+    /// 圆角基准：刘海宽 180pt 时顶部内凹肩/底部外凸角的目测半径，随面板宽度等比放大
     static let referenceNotchWidth: CGFloat = 180
     static let topCornerBase: CGFloat = 6
     static let bottomCornerBase: CGFloat = 14
@@ -1255,7 +1256,8 @@ final class NotchPanel: NSPanel {
     }
 }
 
-/// 刘海形遮罩容器：顶部两角小圆角、底部两角大圆角，圆角半径随容器宽度相对刘海宽
+/// 刘海形遮罩容器：顶部两角内凹肩（向面板体内扣，像真刘海肩部）、底部两角外凸大圆角，
+/// 圆角半径随容器宽度相对刘海宽
 /// 等比放大（弹簧每帧 setFrame 触发 layout 重建路径，动画全程保持「当前大小的刘海」）。
 /// 本视图提供纯黑底色并做形状裁剪，hosting 由外部铺满。
 private final class NotchShapeContainerView: NSView {
@@ -1303,22 +1305,26 @@ private final class NotchShapeContainerView: NSView {
                                              topRadius: topR, bottomRadius: bottomR)
     }
 
-    /// 顶边直边贴屏幕顶、四角圆角的刘海路径（层坐标 y 向上，顺时针一圈）
+    /// 顶边直边贴屏幕顶、顶部两角内凹肩（弧心在面板顶角点上，向面板体内扣，
+    /// 像真刘海肩部）、底部两角外凸圆角的刘海路径（层坐标 y 向上）
     private static func notchShapePath(width: CGFloat, height: CGFloat,
                                        topRadius tR: CGFloat, bottomRadius bR: CGFloat) -> CGPath {
         let path = CGMutablePath()
-        path.move(to: CGPoint(x: 0, y: height - tR))
-        path.addArc(center: CGPoint(x: tR, y: height - tR), radius: tR,
-                    startAngle: .pi, endAngle: .pi / 2, clockwise: true)
-        path.addLine(to: CGPoint(x: width - tR, y: height))
-        path.addArc(center: CGPoint(x: width - tR, y: height - tR), radius: tR,
-                    startAngle: .pi / 2, endAngle: 0, clockwise: true)
-        path.addLine(to: CGPoint(x: width, y: bR))
+        path.move(to: CGPoint(x: tR, y: height))                       // 顶边左端（肩部内扣后内缩）
+        path.addLine(to: CGPoint(x: width - tR, y: height))            // 顶边
+        // 顶右肩内凹：圆心=右上角点，弧从顶边内缩点扣到右墙（材料在弧外）
+        path.addArc(center: CGPoint(x: width, y: height), radius: tR,
+                    startAngle: .pi, endAngle: .pi * 3 / 2, clockwise: false)
+        path.addLine(to: CGPoint(x: width, y: bR))                     // 右墙
         path.addArc(center: CGPoint(x: width - bR, y: bR), radius: bR,
                     startAngle: 0, endAngle: -.pi / 2, clockwise: true)
-        path.addLine(to: CGPoint(x: bR, y: 0))
+        path.addLine(to: CGPoint(x: bR, y: 0))                         // 底边
         path.addArc(center: CGPoint(x: bR, y: bR), radius: bR,
                     startAngle: -.pi / 2, endAngle: .pi, clockwise: true)
+        path.addLine(to: CGPoint(x: 0, y: height - tR))                // 左墙
+        // 顶左肩内凹：弧从左墙顶扣到顶边左端
+        path.addArc(center: CGPoint(x: 0, y: height), radius: tR,
+                    startAngle: .pi * 3 / 2, endAngle: .pi * 2, clockwise: false)
         path.closeSubpath()
         return path
     }
