@@ -287,8 +287,9 @@ struct NotchContentView: View {
     private static let cardRadius: CGFloat = 14
     /// 日历列自然宽度：卡片约 320 宽；固定部分高约 229–252（间距已收紧），卡片宽于高
     private static let calendarColumnWidth: CGFloat = 300
-    /// 系统资源列自然宽度：两列主要项环（CPU/内存）与三列次要项各有足够宽度
-    private static let resourcesColumnWidth: CGFloat = 248
+    /// 系统资源列自然宽度：两列主要项环（CPU/内存）之间的空白要放得下浮动的 GPU 小环，
+    /// 读数行与通栏趋势线也需要横向空间（与日历卡片同宽 320，观感统一）
+    private static let resourcesColumnWidth: CGFloat = 300
     /// 正在播放列自然宽度
     private static let musicColumnWidth: CGFloat = 224
 
@@ -521,35 +522,40 @@ struct NotchContentView: View {
 
     // MARK: - 系统资源模块
 
-    /// 资源卡分块尺寸：上半块（主要项 CPU/内存 环形仪表）与下半块（次要项 GPU/磁盘/网络）
-    /// 等高——卡片整体保持长方形，下半块才有空间放速率趋势线；上下两块之间一条细分隔线。
+    /// 资源卡分块尺寸：上半块（主要项 CPU/内存 环形仪表，GPU 小环浮在两环之间的空白正中）
+    /// 与下半块（磁盘/网络 上下两行：标题 + 读数一行，趋势线通栏拉满）；上下两块之间一条细分隔线。
     private static let resourceHalfHeight: CGFloat = 88
     private static let resourceCellGap: CGFloat = 8
+    /// 顶部条与上半块、上半块与下半块之间的间距（细分隔线上下的留白同值）
     private static let resourceHalfDividerGap: CGFloat = 7
     private static let primaryRingSize: CGFloat = 56
     private static let primaryRingLineWidth: CGFloat = 5.5
-    private static let secondaryRingSize: CGFloat = 40
-    private static let secondaryRingLineWidth: CGFloat = 3.5
-    /// 下半块单元格内容块固定高：GPU 小环与「两行速率 + 趋势线」等高，三格标签才能对齐同一水平线
-    private static let secondaryContentHeight: CGFloat = 44
-    private static let resourceSparklineHeight: CGFloat = 16
+    /// GPU 次要项：小环明显小于主项环（主次分明），浮在两主项之间的空白里，不占格子
+    private static let gpuRingSize: CGFloat = 34
+    private static let gpuRingLineWidth: CGFloat = 3
+    private static let resourceRateRowGap: CGFloat = 8
+    /// 趋势线通栏（标题与读数独占一行），比左右分栏时长一倍以上
+    private static let resourceSparklineHeight: CGFloat = 24
 
     /// 主要项（环形仪表，占上半块）：固定顺序 CPU → 内存
     private var primaryResourceItems: [NotchResourceItem] {
         enabledResourceItems.filter { $0 == .cpu || $0 == .memory }
     }
 
-    /// 次要项（占下半块）：固定顺序 GPU → 磁盘 → 网络
-    private var secondaryResourceItems: [NotchResourceItem] {
-        enabledResourceItems.filter { $0 == .gpu || $0 == .disk || $0 == .network }
+    /// 速率项（占下半块）：固定顺序 磁盘 → 网络（上下两行，趋势线可拉长）
+    private var rateResourceItems: [NotchResourceItem] {
+        enabledResourceItems.filter { $0 == .disk || $0 == .network }
     }
 
-    /// 系统资源卡：上半块 = CPU/内存 环形仪表各占 1/4（共半块），下半块 = 其余三项均分；
-    /// 某一半没有启用项时整块隐藏，卡片退回单块高度；紧凑密度（屏幕极矮兜底）= 每项单行。
+    /// 系统资源卡：上半块 = CPU/内存 环形仪表各占一格（共半块），GPU 小环浮在两环之间的空白正中；
+    /// 下半块 = 磁盘/网络 上下两行（标题+读数一行 + 通栏趋势线）。
+    /// 紧凑密度（屏幕极矮兜底）= 每项单行。
     private var resourcesColumn: some View {
         let inner = effectiveColumnWidth(Self.resourcesColumnWidth)
         let primary = primaryResourceItems
-        let secondary = secondaryResourceItems
+        let rates = rateResourceItems
+        let showGPU = enabledResourceItems.contains(.gpu)
+        let hasUpper = !primary.isEmpty || (showGPU && !compactMode)
         return VStack(alignment: .leading, spacing: 0) {
             moduleHeader("cpu", L10n.tr("系统资源"))
                 .padding(.bottom, compactMode ? 4 : Self.resourceHalfDividerGap)
@@ -560,23 +566,59 @@ struct NotchContentView: View {
                     }
                 }
             } else {
-                if !primary.isEmpty {
-                    resourceHalf(items: primary, inner: inner,
-                                 cell: { primaryResourceCell($0, width: $1) })
+                if hasUpper {
+                    resourceUpperHalf(primary: primary, showGPU: showGPU, inner: inner)
                 }
-                if !primary.isEmpty && !secondary.isEmpty {
+                if hasUpper && !rates.isEmpty {
                     Rectangle()
                         .fill(Color.primary.opacity(0.06))
                         .frame(height: 0.5)
                         .padding(.vertical, Self.resourceHalfDividerGap)
                 }
-                if !secondary.isEmpty {
-                    resourceHalf(items: secondary, inner: inner,
-                                 cell: { secondaryResourceCell($0, width: $1) })
+                if !rates.isEmpty {
+                    VStack(alignment: .leading, spacing: Self.resourceRateRowGap) {
+                        ForEach(rates, id: \.self) { rateResourceRow($0, width: inner) }
+                    }
+                    .frame(width: inner)
                 }
             }
         }
         .frame(width: inner)
+    }
+
+    /// 上半块：CPU/内存 环各占一格；GPU 小环浮在两格之间的空白正中（不占格、不挤主项）。
+    /// 只启用一个主项（或没有主项）时中间没有留白，GPU 退回成紧邻的第二个格子。
+    private func resourceUpperHalf(primary: [NotchResourceItem], showGPU: Bool, inner: CGFloat) -> some View {
+        let width = resourceCellWidth(count: max(1, primary.count), inner: inner)
+        // 两格之间才有空白可浮（ZStack 居中），否则与主项并排
+        let floats = showGPU && primary.count >= 2
+        let inline = showGPU && !floats
+        return ZStack {
+            HStack(spacing: Self.resourceCellGap) {
+                ForEach(primary, id: \.self) { item in
+                    primaryResourceCell(item, width: width)
+                }
+                if inline { gpuBadge }
+            }
+            .frame(width: inner)
+            if floats { gpuBadge }
+        }
+        .frame(width: inner)
+    }
+
+    /// GPU 次要项：小环（环心百分比）+ 名称，浮在上半块两环之间的空白正中
+    private var gpuBadge: some View {
+        VStack(spacing: 2) {
+            ResourceRing(progress: normalizedProgress(.gpu),
+                         text: percentText(.gpu),
+                         size: Self.gpuRingSize,
+                         lineWidth: Self.gpuRingLineWidth,
+                         fontSize: 10)
+            Text(NotchResourceItem.gpu.title)
+                .font(.system(size: 9.5))
+                .foregroundColor(.secondary)
+                .lineLimit(1)
+        }
     }
 
     /// 半块内的单元格均分：n 格按内宽等分，单个格子不铺满整行（与多格观感一致）
@@ -584,17 +626,6 @@ struct NotchContentView: View {
         let n = max(1, count)
         guard n > 1 else { return min(inner, Self.primaryRingSize * 2.4) }
         return (inner - Self.resourceCellGap * CGFloat(n - 1)) / CGFloat(n)
-    }
-
-    private func resourceHalf<Cell: View>(items: [NotchResourceItem], inner: CGFloat,
-                                          @ViewBuilder cell: @escaping (NotchResourceItem, CGFloat) -> Cell) -> some View {
-        let width = resourceCellWidth(count: items.count, inner: inner)
-        return HStack(spacing: Self.resourceCellGap) {
-            ForEach(items, id: \.self) { item in
-                cell(item, width)
-            }
-        }
-        .frame(width: inner)
     }
 
     /// 主要项单元格：环形仪表（环心 = 百分比）+ 名称 + 副信息（CPU 核心数 / 内存 已用-总量）
@@ -621,43 +652,30 @@ struct NotchContentView: View {
         .frame(minHeight: Self.resourceHalfHeight)
     }
 
-    /// 次要项单元格：标签置顶（三格对齐同一基线）——GPU = 小环；磁盘/网络 = 两行速率 + 趋势线
-    private func secondaryResourceCell(_ item: NotchResourceItem, width: CGFloat) -> some View {
-        VStack(spacing: 3) {
-            Text(item.title)
-                .font(.system(size: 10))
-                .foregroundColor(.secondary)
-                .lineLimit(1)
-            Group {
-                if item == .gpu {
-                    ResourceRing(progress: normalizedProgress(item),
-                                 text: percentText(item),
-                                 size: Self.secondaryRingSize,
-                                 lineWidth: Self.secondaryRingLineWidth,
-                                 fontSize: 10)
-                } else {
-                    VStack(spacing: 2) {
-                        let lines = rateLines(item)
-                        Text(lines.read)
-                            .font(.system(size: 9.5, weight: .medium))
-                            .monospacedDigit()
-                            .lineLimit(1)
-                            .minimumScaleFactor(0.8)
-                        Text(lines.write)
-                            .font(.system(size: 9.5, weight: .medium))
-                            .monospacedDigit()
-                            .lineLimit(1)
-                            .minimumScaleFactor(0.8)
-                        ResourceSparkline(normalizedValues: normalizedHistory(item))
-                            .frame(height: Self.resourceSparklineHeight)
-                    }
-                    .foregroundColor(.primary.opacity(0.9))
+    /// 速率项一行：标题 + 两向读数占一行，趋势线整条通栏（线长拉满内宽）
+    private func rateResourceRow(_ item: NotchResourceItem, width: CGFloat) -> some View {
+        let lines = rateLines(item)
+        return VStack(alignment: .leading, spacing: 3) {
+            HStack(spacing: 6) {
+                Text(item.title)
+                    .font(.system(size: 10))
+                    .foregroundColor(.secondary)
+                    .fixedSize()
+                Spacer(minLength: 4)
+                HStack(spacing: 8) {
+                    Text(lines.read)
+                    Text(lines.write)
                 }
+                .font(.system(size: 9.5, weight: .medium))
+                .monospacedDigit()
+                .foregroundColor(.primary.opacity(0.9))
+                .lineLimit(1)
+                .minimumScaleFactor(0.8)
             }
-            .frame(height: Self.secondaryContentHeight)
+            ResourceSparkline(normalizedValues: normalizedHistory(item))
+                .frame(height: Self.resourceSparklineHeight)
         }
         .frame(width: width)
-        .frame(minHeight: Self.resourceHalfHeight)
     }
 
     /// 紧凑密度兜底（屏幕极矮）：每项单行「图标 名称 … 数值」，无环、无趋势线

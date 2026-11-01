@@ -156,3 +156,13 @@
 - **Pitfall:** 直接用 `Circle().stroke(lineWidth:)` 画环,描边以路径为中心向内外各占一半,细看环外侧被相邻视图裁掉一条(尤其放在固定 `frame(width:height:)` 的角落或卡片边缘时)。
 - **Cause:** `Circle()` 的路径内切于 frame,`stroke` 默认居中描边,半径不足时超出边界。
 - **Prevention:** 先 `.inset(by: lineWidth / 2)` 再 `.stroke`(环心文字同理加 `lineWidth` 级内边距),这样描边完整落在 frame 内。参考 `ResourceRing`。
+
+## DEV-032: 资源卡「浮在两主项之间」的次要项要用 ZStack 覆盖,并准备好无留白时的回退
+- **Pitfall:** 想把 GPU 小环放进上半块两环之间的空白正中,若把三个格子塞进同一个 `HStack`,主项环会被挤窄(120 → 92),内存副信息「12.4 GB / 32 GB」被迫缩字,主次感也被拉平。
+- **Cause:** `HStack` 等分宽度会重新分配主项空间;而「空白」本来就在两格之间,不需要新格子。
+- **Prevention:** 主项仍用 `HStack` 等分,次要项作为 `ZStack` 的一层居中覆盖(不占格、主项尺寸不变),尺寸小于主项(GPU 环 34 vs CPU/内存 56)以分层级。只启用一个主项(或没有主项)时中间没有留白,此时必须回退成并排的第二个格子,否则会和主项文字/环重叠;核对重叠要按「垂直区间 × 水平区间」分段看——小环与副信息行不在同一高度带,才允许水平区间相邻。加宽列(`resourcesColumnWidth`)只是给留白与通栏趋势线留余量,不能代替回退分支。
+
+## DEV-033: 无辅助功能权限时无法用合成鼠标事件验证灵动岛,改用测量探针
+- **Pitfall:** 想脚本化验证灵动岛资源卡:用 `CGWarpMouseCursorPosition` 把光标移进刘海热区、并 `post` 合成 `mouseMoved`,面板始终不弹出(`Notch: show` 日志为 0),容易误判成布局没生效。
+- **Cause:** 光标 warp 不产生事件;合成事件需要辅助功能授权,CLI 进程未授权时 `post` 静默丢弃(listen-only tap 本身仍能装,`tap installed OK` 不代表能注入事件)。
+- **Prevention:** 布局/尺寸类改动不要依赖截图或鼠标模拟:用 `NotchContentView.measureCardSize(module:columnWidth:compact:model:)` 在临时 env 探针里跑组合(全开 / 只开主项 / 主项+GPU / 只开 GPU / 无 GPU),常规与 compact 各量一次,核对卡片宽高与「少一整块」的差值;探针用完立即删除(会改 `notchResourceItems` 的设置,必须临时改再还原)。
