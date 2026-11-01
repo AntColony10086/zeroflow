@@ -131,3 +131,8 @@
 - **Pitfall:** 手写 CGPath 给 NSView 的 layer 做遮罩(iOS 思维默认左上原点 y 向下),在 macOS 上路径垂直翻转,圆角上下颠倒。
 - **Cause:** macOS 图层坐标系不是固定 y 向下:`isGeometryFlipped` 跟随视图的 `isFlipped`(默认 false → 原点左下、y 向上;flipped 视图 → true)。与 UIKit 相反方向的坑。
 - **Prevention:** 写路径前先确认宿主视图 isFlipped;非 flipped 视图按 y 向上写(底边在 y=0)。实测方法:`swift` 脚本建 `NSView` + `wantsLayer = true`,打印 `layer?.isGeometryFlipped`(注意 Swift 里是 `isGeometryFlipped` 不是 `geometryFlipped`,后者编译错)。
+
+## DEV-027: 窗口弹簧回弹要锚定尺寸,不能对 origin 做弹簧
+- **Pitfall:** 灵动岛面板的展开/收起弹簧把窗口 frame 当 x/y/width/height 四分量独立积分,过冲时 x/y 也在动(且 x 是左边界、y 是下边界),宽度/高度回弹表现为整个窗口一边平移一边变形,用户感知成「整窗回弹/晃动」,而不是「原地放大到 105% 再回弹到 100%」。
+- **Cause:** origin 是尺寸的函数(顶边中点固定时 x = centerX - w/2、y = topY - h);对 origin 和尺寸分别积弹簧等于把同一个几何约束拆成两个自由度过冲,二者相位/幅度不一致就产生整体位移。仅把 x/y 阻尼调大(0.90)也消不掉宽度过冲带来的边缘扫动。
+- **Prevention:** 位置分量改积「锚点」而非 origin(顶边贴屏幕顶的面板用 centerX/topY,锚点临界阻尼 ζ=1 零回弹),每帧用 `x = centerX - width/2`、`y = topY - height` 反推 frame;尺寸分量保留欠阻尼过冲,窗口就会围绕锚点左右/上下对称外扩再收回,位置全程不动。过冲幅度随交接初速变化,不能直接用 `exp(-πζ/√(1-ζ²))` 推算,应按实际分段交接逻辑跑数值模拟定阻尼比。参考 `NotchPanelView.swift` 的 `NotchSpringAnimator`。
