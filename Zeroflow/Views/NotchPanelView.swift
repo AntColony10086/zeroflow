@@ -996,8 +996,9 @@ private struct ResourceSparkline: View {
 }
 
 /// 灵动岛面板：非激活 borderless 面板，纯黑底，形状 = 「刘海形」：
-/// 顶边贴屏幕顶（盖住真刘海）、四角外凸同半径圆角（与真刘海肩部同向：外侧背景
-/// 在右上呈 ╭、左上呈 ╮），半径随面板宽度相对刘海宽等比放大（始终像「放大版刘海」）。
+/// 顶边满宽且贴屏幕顶（盖住真刘海）、顶部两个角位补月牙黑并沿凹弧收细到内缩的竖直侧墙
+/// （外侧背景在角上呈圆角：右上 ╭ / 左上呈 ╮，与真刘海肩部同形）、底部两角外凸圆角，
+/// 半径随面板宽度相对刘海宽等比放大（始终像「放大版刘海」）。
 /// 悬停/点击/Esc 判定全部由 NotchHotspotController 的 listen-only tap 完成，
 /// 本面板只负责内容展示（不成为 key，无键盘交互）。
 ///
@@ -1254,7 +1255,7 @@ final class NotchPanel: NSPanel {
     }
 }
 
-/// 刘海形遮罩容器：四角外凸同半径圆角（与真刘海肩部同向），
+/// 刘海形遮罩容器：顶部两角凹形肩弧（矩形角位补月牙黑，外侧背景呈圆角）、底部两角外凸圆角，
 /// 半径随容器宽度相对刘海宽
 /// 等比放大（弹簧每帧 setFrame 触发 layout 重建路径，动画全程保持「当前大小的刘海」）。
 /// 本视图提供纯黑底色并做形状裁剪，hosting 由外部铺满。
@@ -1295,31 +1296,40 @@ private final class NotchShapeContainerView: NSView {
 
     private func updateMask() {
         let scale = bounds.width / referenceWidth
-        // 四角同半径：随面板宽度相对刘海宽等比放大，上限为半高
+        // 底角半径与顶部肩弧半径同源：随面板宽度相对刘海宽等比放大
         let radius = min(NotchPanel.cornerBase * scale, bounds.height / 2)
+        // 肩弧不能吃掉整个高度/宽度
+        let shoulder = min(radius, bounds.height / 3, bounds.width / 6)
         maskLayer.frame = bounds
         maskLayer.path = Self.notchShapePath(width: bounds.width, height: bounds.height,
-                                             radius: radius)
+                                             cornerRadius: radius, shoulderRadius: shoulder)
     }
 
-    /// 顶边直边贴屏幕顶、四角外凸同半径圆角的刘海路径（层坐标 y 向上，顺时针一圈）。
-    /// 外凸方向 = 与真刘海肩部同向：面板外侧背景在右上呈 ╭、左上呈 ╮。
+    /// 刘海形路径（层坐标 y 向上）：
+    /// - 顶边 = 面板满宽且与屏幕顶边齐平（盖住真刘海，和屏幕顶边连成一条线）；
+    /// - 顶部两角 = 矩形角位上的月牙形黑色填充（凹形肩弧，弧心在角点正下方）：
+    ///   黑色在上面铺满整个角位，再沿凹弧收细到内缩 `s` 的竖直侧墙，
+    ///   使面板外侧背景在角上呈圆角（右上 ╭ / 左上 ╮），和真刘海肩部（屏幕顶边
+    ///   绕开刘海侧壁的倒角）同形；
+    /// - 底部两角 = 外凸圆角。
     private static func notchShapePath(width: CGFloat, height: CGFloat,
-                                       radius r: CGFloat) -> CGPath {
+                                       cornerRadius r: CGFloat, shoulderRadius s: CGFloat) -> CGPath {
         let path = CGMutablePath()
-        path.move(to: CGPoint(x: 0, y: height - r))                    // 左墙顶
-        path.addArc(center: CGPoint(x: r, y: height - r), radius: r,
-                    startAngle: .pi, endAngle: .pi / 2, clockwise: true) // 顶左角
-        path.addLine(to: CGPoint(x: width - r, y: height))             // 顶边
-        path.addArc(center: CGPoint(x: width - r, y: height - r), radius: r,
-                    startAngle: .pi / 2, endAngle: 0, clockwise: true)  // 顶右角
-        path.addLine(to: CGPoint(x: width, y: r))                      // 右墙
-        path.addArc(center: CGPoint(x: width - r, y: r), radius: r,
-                    startAngle: 0, endAngle: -.pi / 2, clockwise: true) // 底右角
-        path.addLine(to: CGPoint(x: r, y: 0))                          // 底边
-        path.addArc(center: CGPoint(x: r, y: r), radius: r,
-                    startAngle: -.pi / 2, endAngle: .pi, clockwise: true) // 底左角
-        path.closeSubpath()
+        path.move(to: CGPoint(x: 0, y: height))                        // 顶边左端（屏幕顶边）
+        // 顶左肩弧：(0,h) → (s, h-s)，弧心 (0,h-s)，水平切顶边/竖直切左墙
+        path.addArc(center: CGPoint(x: 0, y: height - s), radius: s,
+                    startAngle: .pi / 2, endAngle: 0, clockwise: true)
+        path.addLine(to: CGPoint(x: s, y: r))                          // 左墙（内缩 s）
+        path.addArc(center: CGPoint(x: s + r, y: r), radius: r,
+                    startAngle: .pi, endAngle: .pi * 3 / 2, clockwise: false)  // 底左角
+        path.addLine(to: CGPoint(x: width - s - r, y: 0))              // 底边
+        path.addArc(center: CGPoint(x: width - s - r, y: r), radius: r,
+                    startAngle: .pi * 3 / 2, endAngle: .pi * 2, clockwise: false) // 底右角
+        path.addLine(to: CGPoint(x: width - s, y: height - s))         // 右墙（内缩 s）
+        // 顶右肩弧：(w-s, h-s) → (w, h)，弧心 (w,h-s)
+        path.addArc(center: CGPoint(x: width, y: height - s), radius: s,
+                    startAngle: .pi, endAngle: .pi / 2, clockwise: true)
+        path.closeSubpath()                                            // 顶边 → (0,h)
         return path
     }
 }
