@@ -243,8 +243,6 @@ struct NotchContentView: View {
     var onNavigateModule: ((Int) -> Void)? = nil
     /// 遮罩侧墙相对窗口边缘的内缩量（由 NotchPanel 按面板宽算），箭头按钮据此避开肩弧遮罩
     var sideWallInset: CGFloat = 0
-    /// 顶部条左侧放不下两个箭头时（窄卡片）改为分列刘海左右两侧
-    var arrowsSplit = false
     /// 测量单模块尺寸时指定要渲染的模块
     var modulesOverride: Module? = nil
     /// 测量时指定列宽；nil = 按自然宽/拉伸规则
@@ -275,7 +273,7 @@ struct NotchContentView: View {
     static let outerVPadding: CGFloat = 16
     /// 顶部条与内容卡槽的间距（渲染与尺寸决策共用）
     static let switcherGap: CGFloat = 8
-    /// 切换箭头按钮：按钮边长 / 两按钮间距 / 两个按钮合计宽度（放不下时改为分列刘海两侧）
+    /// 切换箭头按钮：按钮边长 / 两按钮间距 / 两个按钮合计宽度（面板最小宽度据此取，见 NotchPanel）
     private static let arrowButtonSize: CGFloat = 24
     private static let arrowGap: CGFloat = 6
     static let arrowBlockWidth: CGFloat = arrowButtonSize * 2 + arrowGap
@@ -424,25 +422,14 @@ struct NotchContentView: View {
 
     /// 顶部条：刘海高度的黑条（面板水平居中于刘海，中间被硬件刘海挡住），
     /// 左上角挨着卡片左边缘放「上一张 / 下一张」箭头，不占卡片左右的留白；
-    /// 面板窄到左侧放不下两个箭头时（正在播放卡）改为分列刘海左右两侧
+    /// 面板最小宽度由 NotchPanel 保证这两个箭头落在刘海左侧可见处
     private var topBar: some View {
-        let inset = sideWallInset + Self.outerHPadding
-        return Group {
-            if arrowsSplit {
-                HStack(spacing: 0) {
-                    navigationArrow(step: -1)
-                    Spacer(minLength: 0)
-                    navigationArrow(step: 1)
-                }
-            } else {
-                HStack(spacing: Self.arrowGap) {
-                    navigationArrow(step: -1)
-                    navigationArrow(step: 1)
-                    Spacer(minLength: 0)
-                }
-            }
+        HStack(spacing: Self.arrowGap) {
+            navigationArrow(step: -1)
+            navigationArrow(step: 1)
+            Spacer(minLength: 0)
         }
-        .padding(.horizontal, inset)
+        .padding(.horizontal, sideWallInset + Self.outerHPadding)
         .frame(height: notchHeight, alignment: .center)
     }
 
@@ -1160,8 +1147,8 @@ private struct ResourceSparkline: View {
 /// 尺寸 = 内容自适应：卡片取模块自然尺寸（日历列宽 300，卡片 ≈ 320 宽、自然高 ≈ 229–252），
 /// 面板 = 卡片 + 可见外边距（四面 16，另补遮罩侧墙内缩 ≈15）
 /// + 顶部刘海条（仅保留屏幕边界，日程多时卡片向下生长、到上限后列表滚动）。
-/// 模块切换有两路：顶部条左上角的箭头按钮（面板左侧够宽就一直放左边，窄卡片放不下时
-/// 分列刘海左右两侧），以及面板范围内的双指左右滑动
+/// 模块切换有两路：顶部条左上角的箭头按钮（面板最小宽度保证它们不被刘海挡住），
+/// 以及面板范围内的双指左右滑动
 /// （local monitor 收 scrollWheel，锁横轴累积超阈值切一张；循环切换，单模块时箭头置灰）。
 /// 动画（NotchSpringAnimator 只驱动 frame，全程不透明：形状渐变本身就是全部视觉效果，
 /// 无透明度渐变，DEV-022）：
@@ -1185,7 +1172,7 @@ final class NotchPanel: NSPanel {
     static let stageOneWidthFraction: CGFloat = 0.8
     /// 段1 引导分量（展开=宽度/收起=高度）位移进度达到该比例即交接下一段
     static let handoffProgress: CGFloat = 0.85
-    /// 顶部条箭头与刘海硬件之间的最小间距（决定窄卡片是否改成分列两侧）
+    /// 顶部条箭头与刘海硬件之间的最小间距（决定面板最小宽度）
     private static let arrowNotchClearance: CGFloat = 4
     private lazy var springAnimator = NotchSpringAnimator(panel: self)
     /// 弹簧正在趋向的目标 frame（present/dismiss 更新）。
@@ -1261,8 +1248,6 @@ final class NotchPanel: NSPanel {
         let compact: Bool
         /// 遮罩肩弧造成的左右侧墙内缩（渲染端据此避让左右箭头按钮）
         let sideInset: CGFloat
-        /// 顶部条左侧放不下两个箭头时（窄卡片）改为分列刘海左右两侧
-        let arrowsSplit: Bool
     }
 
     /// 尺寸决策：面板尺寸随内容自适应——卡片取模块自然尺寸（宽 = 模块自然列宽 + 内边距，
@@ -1345,31 +1330,31 @@ final class NotchPanel: NSPanel {
     /// 面板尺寸 = 卡片 + 可见外边距（与底部同值）+ 顶部刘海条；宽高都钳制进屏幕，水平居中刘海。
     /// 遮罩的左右侧墙相对窗口边缘内缩（肩弧半径），可见黑边只剩内缩以外的部分，
     /// 所以面板宽要把内缩额外补上，否则卡片会紧贴可见边缘。
-    /// 切换箭头放在顶部条内，不占用卡片左右的留白。
+    /// 切换箭头放在顶部条左上角，不占用卡片左右的留白；面板宽还有下限（刘海 + 左侧箭头区），
+    /// 保证窄卡片（正在播放）时两个箭头也不被刘海挡住。
     private static func makeLayout(card: CGSize, contentHeight: CGFloat, scale: CGFloat,
                                    compact: Bool, notchSize: CGSize, screen: NSScreen) -> PanelLayout {
         let height = Self.clamp(card.height + notchSize.height
                                     + NotchContentView.switcherGap + NotchContentView.outerVPadding,
                                 notchSize.height + 8, screen.frame.height - 80)
-        // 侧墙内缩随面板宽变化（半径 ∝ 宽），迭代两次即收敛
+        // 侧墙内缩随面板宽变化（半径 ∝ 宽），迭代两次即收敛；
+        // 同时保证左侧够放两个箭头（+ 与刘海的最小间距），窄卡片面板据此加宽
         let hMargin = NotchContentView.outerHPadding
+        let arrowReach = hMargin + NotchContentView.arrowBlockWidth + Self.arrowNotchClearance
         var width = card.width + hMargin * 2
-        for _ in 0..<2 {
+        for _ in 0..<3 {
             let sideInset = NotchShapeContainerView.sideInset(width: width, height: height,
                                                               referenceWidth: notchSize.width)
-            width = card.width + (hMargin + sideInset) * 2
+            let natural = card.width + (hMargin + sideInset) * 2
+            let arrowsMin = notchSize.width + (arrowReach + sideInset) * 2
+            width = max(natural, arrowsMin)
         }
         width = Self.clamp(width, notchSize.width + 24, screen.frame.width - 16)
         let sideInset = NotchShapeContainerView.sideInset(width: width, height: height,
                                                           referenceWidth: notchSize.width)
-        // 顶部条左上角要放得下两个箭头且不压到刘海硬件；放不下（正在播放等窄卡片）时
-        // 渲染端改为分列刘海左右两侧
-        let leftStripWidth = (width - notchSize.width) / 2
-        let arrowsSplit = leftStripWidth < sideInset + hMargin
-            + NotchContentView.arrowBlockWidth + Self.arrowNotchClearance
         return PanelLayout(width: width, height: height, card: card,
                            contentHeight: contentHeight, scale: scale, compact: compact,
-                           sideInset: sideInset, arrowsSplit: arrowsSplit)
+                           sideInset: sideInset)
     }
 
     /// 悬停延时到期 / 单击热区后展示：顶边贴屏幕顶、水平居中于刘海、尺寸由内容决定。
@@ -1515,7 +1500,6 @@ final class NotchPanel: NSPanel {
                                                                    self?.onNavigateModule?(step)
                                                                },
                                                                sideWallInset: layout.sideInset,
-                                                               arrowsSplit: layout.arrowsSplit,
                                                                cardSize: layout.card,
                                                                cardContentHeight: layout.contentHeight,
                                                                cardScale: layout.scale,
