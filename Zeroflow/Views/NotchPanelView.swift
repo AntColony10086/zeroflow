@@ -995,7 +995,7 @@ private struct ResourceSparkline: View {
     }
 }
 
-/// 灵动岛面板：非激活 borderless 面板，深色 HUD 磨砂/玻璃，形状 = 「刘海形」：
+/// 灵动岛面板：非激活 borderless 面板，纯黑底，形状 = 「刘海形」：
 /// 顶边贴屏幕顶（盖住真刘海）、四角圆角（顶角小、底角大），圆角随面板宽度相对
 /// 刘海宽等比放大（始终像「放大版刘海」）。
 /// 悬停/点击/Esc 判定全部由 NotchHotspotController 的 listen-only tap 完成，
@@ -1004,10 +1004,10 @@ private struct ResourceSparkline: View {
 /// 尺寸 = 设置的展开宽/高（固定值，不随内容变化），内容显示在刘海以下区域。
 /// 动画（NotchSpringAnimator 只驱动 frame，全程不透明：形状渐变本身就是全部视觉效果，
 /// 无透明度渐变，DEV-022）：
-/// - 展开两段：段1 横向从迷你刘海扩到 80% 终宽（高度停在迷你刘海高）→ 段2 纵向长高 +
-///   剩余横向同时到终点（iOS 灵动岛手感）；
-/// - 收起镜像两段：段1 纵向收到刘海高（宽度不动）→ 段2 横向收拢回迷你刘海 → orderOut；
-/// - 打断续接（DEV-023）：弹簧以当前值/速度重定向，被断掉的后续段随 completion 作废。
+/// - 展开单段连续：从迷你刘海弹簧直达终点，宽分量先冲出（带过冲）、高分量慢半拍
+///   平滑跟随（expandTuning 差异化调参），中途不停顿、无中间回弹；
+/// - 收起镜像单段：宽度先收拢、高度跟上回到迷你刘海 → 动画结束才 orderOut；
+/// - 打断续接（DEV-023）：弹簧以当前值/速度重定向，在途 completion 作废。
 /// 起点/收起终点的迷你刘海 = 比真刘海小一圈（顶边贴屏幕顶、左右/底各内缩），
 /// 完全藏在刘海硬件后不可见。
 final class NotchPanel: NSPanel {
@@ -1017,9 +1017,6 @@ final class NotchPanel: NSPanel {
     static let bottomCornerBase: CGFloat = 14
     /// 迷你刘海相对真刘海的内缩（左右/底部；顶边贴屏幕顶）
     static let startInset: CGFloat = 6
-    /// 两段展开的段1目标宽度比例
-    static let stageOneWidthFraction: CGFloat = 0.8
-
     private lazy var springAnimator = NotchSpringAnimator(panel: self)
     /// 弹簧正在趋向的目标 frame（present/dismiss 更新）。
     /// 控制器保活/点击判定用这个，而不是 present() 返回时刻的瞬时 frame：
@@ -1046,7 +1043,7 @@ final class NotchPanel: NSPanel {
         self.isReleasedWhenClosed = false
         self.animationBehavior = .none
         self.hidesOnDeactivate = false
-        // 固定深色外观：HUD 磨砂 + 白字（灵动岛风格，不随系统深浅模式变化）
+        // 固定深色外观 + 白字（灵动岛风格，不随系统深浅模式变化）
         self.appearance = NSAppearance(named: .darkAqua)
     }
 
@@ -1112,7 +1109,7 @@ final class NotchPanel: NSPanel {
 
     /// 悬停延时到期 / 单击热区后展示：顶边贴屏幕顶、水平居中于刘海、尺寸 = 设置展开宽/高。
     /// 每次 present 重建 contentView（模型重置到今天，同时取最新内容设置）。
-    /// 两段展开见类文档；打断续接走 isVisible 分支单段重定向。
+    /// 单段连续展开见类文档；打断续接走 isVisible 分支单段重定向。
     func present(hotspotTL: CGRect, notchTL: CGRect, screen: NSScreen,
                  model: NotchCalendarViewModel, module: NotchContentView.Module?,
                  onSelectModule: @escaping (NotchContentView.Module) -> Void) {
@@ -1133,42 +1130,30 @@ final class NotchPanel: NSPanel {
         let finalFrame = Self.expandedFrame(notchTL: notchTL, screen: screen, layout: layout, unionMaxY: unionMaxY)
         targetFrame = finalFrame
         if isVisible {
-            // 收起动画被打断（快速反复进出）：不重放两段，从当前 frame/速度单段重定向到终点
+            // 收起动画被打断（快速反复进出）：从当前 frame/速度单段重定向到终点
             invalidateShadow()
             springAnimator.animate(to: finalFrame)
         } else {
             let startFrame = Self.miniNotchFrame(notchTL: notchTL, unionMaxY: unionMaxY)
-            // 段1 = 横向到 80% 终宽（高度停在迷你刘海高）；到位后段2 纵向+剩余横向同时到终点。
-            // 全程不透明（DEV-022），形状渐变本身就是全部视觉效果
-            let stageOne = NSRect(x: notchTL.midX - finalFrame.width * Self.stageOneWidthFraction / 2,
-                                  y: unionMaxY - startFrame.height,
-                                  width: finalFrame.width * Self.stageOneWidthFraction,
-                                  height: startFrame.height)
+            // 单段连续弹簧直达终点：宽分量先冲出、高分量慢半拍跟随（expandTuning），
+            // 中途不停顿、无中间回弹；全程不透明（DEV-022），形状渐变本身就是全部视觉效果
             setFrame(startFrame, display: false)
             alphaValue = 1
             orderFront(nil)
             invalidateShadow()
-            springAnimator.animate(to: stageOne) { [weak self] in
-                guard let self, self.isVisible else { return }
-                self.springAnimator.animate(to: finalFrame)
-            }
+            springAnimator.animate(to: finalFrame)
         }
     }
 
-    /// 收起（镜像展开的两段）：段1 纵向收到刘海高（宽度不动）→ 段2 横向收拢回迷你刘海，
+    /// 收起（镜像展开的单段连续弹簧）：宽度先收拢、高度跟上回到迷你刘海，
     /// 动画结束才 orderOut。全程不透明。控制器状态在 hidePanel 即时更新，期间再 present
     /// 会以单段重定向无缝续接展开（在途 completion 作废，orderOut 不会执行）。
     func dismiss(notchTL: CGRect) {
         let unionMaxY = NSScreen.screens.reduce(CGRect.null) { $0.union($1.frame) }.maxY
         let notchFrame = Self.miniNotchFrame(notchTL: notchTL, unionMaxY: unionMaxY)
         targetFrame = notchFrame
-        let stageOne = NSRect(x: notchTL.midX - frame.width / 2, y: unionMaxY - notchFrame.height,
-                              width: frame.width, height: notchFrame.height)
-        springAnimator.animate(to: stageOne, collapse: true) { [weak self] in
-            guard let self, self.isVisible else { return }
-            self.springAnimator.animate(to: notchFrame, collapse: true) { [weak self] in
-                self?.orderOut(nil)
-            }
+        springAnimator.animate(to: notchFrame, collapse: true) { [weak self] in
+            self?.orderOut(nil)
         }
     }
 
@@ -1214,13 +1199,11 @@ final class NotchPanel: NSPanel {
         invalidateShadow()
     }
 
-    /// 液态玻璃背景（macOS 26+）或磨砂底（旧系统）铺满遮罩容器，内容以 autoresizing 跟随；
-    /// 最外层刘海形遮罩容器负责形状裁剪（圆角随宽度等比放大，玻璃/磨砂自身不再设圆角）。
-    /// 不透明度不再可调：使用系统默认外观（玻璃不染色、磨砂不降 alpha）。
+    /// 纯黑背景直接铺在遮罩容器底（遮罩裁出刘海形），内容以 autoresizing 跟随。
     ///
     /// 结构红线（DEV-024）：hosting 必须以 addSubview + autoresizingMask 跟随容器，
-    /// 绝不能赋给 glass.contentView、绝不能对 hosting 用 Auto Layout 约束——
-    /// SwiftUI 固定 .frame 尺寸会经约束/玻璃层反向钳制窗口尺寸，setFrame 的宽高
+    /// 绝不能赋给玻璃 contentView、绝不能对 hosting 用 Auto Layout 约束——
+    /// SwiftUI 固定 .frame 尺寸会经约束链反向钳制窗口尺寸，setFrame 的宽高
     /// 被静默锁死（只有原点生效），「从刘海生长」就退化成全尺寸面板平移。
     private func makeContentView(model: NotchCalendarViewModel, layout: PanelLayout) -> NSView {
         let hosting = NSHostingView(rootView: NotchContentView(model: model,
@@ -1235,28 +1218,11 @@ final class NotchPanel: NSPanel {
                                                                cardNatural: layout.natural,
                                                                cardScale: layout.scale,
                                                                compactMode: layout.compact))
-        let background: NSView
-        if #available(macOS 26.0, *) {
-            let glass = NSGlassEffectView()
-            // 形状交给遮罩容器：玻璃自身四角统一圆角会与顶角小/底角大的刘海形冲突
-            glass.cornerRadius = 0
-            glass.style = .regular
-            background = glass
-        } else {
-            let frost = NSVisualEffectView()
-            frost.material = .hudWindow
-            frost.blendingMode = .behindWindow
-            frost.state = .active
-            background = frost
-        }
-        background.addSubview(hosting)
-        hosting.frame = background.bounds
-        hosting.autoresizingMask = [.width, .height]
         let container = NotchShapeContainerView(referenceNotchWidth: lastNotchSize.width,
                                                 initialSize: CGSize(width: layout.width, height: layout.height))
-        container.addSubview(background)
-        background.frame = container.bounds
-        background.autoresizingMask = [.width, .height]
+        container.addSubview(hosting)
+        hosting.frame = container.bounds
+        hosting.autoresizingMask = [.width, .height]
         return container
     }
 
@@ -1268,7 +1234,7 @@ final class NotchPanel: NSPanel {
 
 /// 刘海形遮罩容器：顶部两角小圆角、底部两角大圆角，圆角半径随容器宽度相对刘海宽
 /// 等比放大（弹簧每帧 setFrame 触发 layout 重建路径，动画全程保持「当前大小的刘海」）。
-/// 子视图层级（背景 + hosting）由外部铺满，本视图只做形状裁剪。
+/// 本视图提供纯黑底色并做形状裁剪，hosting 由外部铺满。
 private final class NotchShapeContainerView: NSView {
     private let referenceWidth: CGFloat
     private let maskLayer: CAShapeLayer
@@ -1282,12 +1248,21 @@ private final class NotchShapeContainerView: NSView {
         maskLayer.actions = ["path": NSNull(), "bounds": NSNull(), "position": NSNull()]
         super.init(frame: NSRect(origin: .zero, size: initialSize))
         wantsLayer = true
+        layer?.backgroundColor = NSColor.black.cgColor
         layer?.mask = maskLayer
         updateMask()
     }
 
     @available(*, unavailable)
     required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
+
+    override var wantsUpdateLayer: Bool { true }
+
+    override func updateLayer() {
+        // AppKit 重建 backing layer 时重申底色/遮罩（常态下 init 已设好）
+        layer?.backgroundColor = NSColor.black.cgColor
+        layer?.mask = maskLayer
+    }
 
     // 弹簧每帧 setFrame 改变 bounds 时 AppKit 触发 layout()，重建遮罩跟随当前尺寸
     override func layout() {
