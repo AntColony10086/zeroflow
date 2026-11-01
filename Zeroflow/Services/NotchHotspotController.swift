@@ -516,7 +516,7 @@ final class NotchHotspotController {
         return selectedModule
     }
 
-    /// 左右箭头 / 双指左右滑动：按启用模块顺序循环切到上一张（-1）或下一张（+1）
+    /// 顶部箭头 / 双指左右滑动：按启用模块顺序循环切到上一张（-1）或下一张（+1）
     private func handleStepModule(_ step: Int) {
         let modules = NotchContentView.enabledModules
         guard modules.count > 1, step != 0 else { return }
