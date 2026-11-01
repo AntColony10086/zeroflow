@@ -609,10 +609,20 @@
     "en": "Items shown in the System Resources module; CPU and Memory are rings with the usage in the center, GPU is a smaller secondary ring, and Disk/Network include a curve of roughly the last minute.",
     "ja": "システムリソースモジュールに表示する項目。CPU とメモリはリング（中心に使用率）、GPU は小さめの二次リング、ディスク/ネットワークには直近約 1 分の推移グラフを表示します。"
   },
-  "弹出面板中显示的内容模块，一次显示一个，可通过面板顶部刘海两侧的按钮切换（默认日历）。全部关闭时，面板仍会弹出并提示添加显示内容。": {
-    "zh-Hans": "弹出面板中显示的内容模块，一次显示一个，可通过面板顶部刘海两侧的按钮切换（默认日历）。全部关闭时，面板仍会弹出并提示添加显示内容。",
-    "en": "Content module shown in the panel, one at a time; switch with the buttons on either side of the notch at the top of the panel (calendar by default). With all modules off, the panel still opens and offers to add content.",
-    "ja": "パネルに表示するコンテンツモジュール（1 つずつ表示）。パネル上部のノッチ両側のボタンで切り替えます（デフォルトはカレンダー）。すべてオフでもパネルは開き、コンテンツ追加を案内します。"
+  "上一个": {
+    "zh-Hans": "上一个",
+    "en": "Previous",
+    "ja": "前へ"
+  },
+  "下一个": {
+    "zh-Hans": "下一个",
+    "en": "Next",
+    "ja": "次へ"
+  },
+  "弹出面板中显示的内容模块，一次显示一个，可通过面板左右两侧的箭头或双指左右滑动循环切换（默认日历）。全部关闭时，面板仍会弹出并提示添加显示内容。": {
+    "zh-Hans": "弹出面板中显示的内容模块，一次显示一个，可通过面板左右两侧的箭头或双指左右滑动循环切换（默认日历）。全部关闭时，面板仍会弹出并提示添加显示内容。",
+    "en": "Content module shown in the panel, one at a time; switch with the arrows on either side of the panel or a two-finger horizontal swipe (calendar by default), cycling through the enabled modules. With all modules off, the panel still opens and offers to add content.",
+    "ja": "パネルに表示するコンテンツモジュール（1 つずつ表示）。パネル左右の矢印ボタンまたは 2 本指の左右スワイプで循環切り替えします（デフォルトはカレンダー）。すべてオフでもパネルは開き、コンテンツ追加を案内します。"
   },
   "没有正在播放的音乐": {
     "zh-Hans": "没有正在播放的音乐",

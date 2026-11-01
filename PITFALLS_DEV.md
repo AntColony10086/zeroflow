@@ -166,3 +166,8 @@
 - **Pitfall:** 想脚本化验证灵动岛资源卡:用 `CGWarpMouseCursorPosition` 把光标移进刘海热区、并 `post` 合成 `mouseMoved`,面板始终不弹出(`Notch: show` 日志为 0),容易误判成布局没生效。
 - **Cause:** 光标 warp 不产生事件;合成事件需要辅助功能授权,CLI 进程未授权时 `post` 静默丢弃(listen-only tap 本身仍能装,`tap installed OK` 不代表能注入事件)。
 - **Prevention:** 布局/尺寸类改动不要依赖截图或鼠标模拟:用 `NotchContentView.measureCardSize(module:columnWidth:compact:model:)` 在临时 env 探针里跑组合(全开 / 只开主项 / 主项+GPU / 只开 GPU / 无 GPU),常规与 compact 各量一次,核对卡片宽高与「少一整块」的差值;探针用完立即删除(会改 `notchResourceItems` 的设置,必须临时改再还原)。
+
+## DEV-034: 非激活灵动岛上的双指滑动不能靠子视图 scrollWheel,要用 NSEvent local monitor
+- **Pitfall:** 想在 `NotchShapeContainerView`(或面板视图)重写 `scrollWheel` 做双指左右切换,手指落在卡片(日历日程是 SwiftUI `ScrollView`)上时事件被 SwiftUI 先吃掉,容器收不到,表现为「滑卡片区域没反应、只有滑边缘才行」。
+- **Cause:** scrollWheel 先派发给指针命中的最深视图(SwiftUI hosting 内部的滚动区域),未被显式放行时不保证沿响应链回到自建容器;非激活面板也不成为 key,无法用键盘/焦点事件兜底。
+- **Prevention:** 用 `NSEvent.addLocalMonitorForEvents(matching: .scrollWheel)` 在 `NotchPanel` 里拦事件(`event.window === self` 且面板可见才处理),不消费原事件,纵向滚动/惯性(`momentumPhase != []`)原样放行;锁轴(累积位移 ≥12pt 且横向占优)后累积 ≥50pt 才切一张,并在手势结束前不再触发,避免一次滑动连翻多张。

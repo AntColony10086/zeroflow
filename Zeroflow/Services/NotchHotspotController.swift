@@ -4,7 +4,8 @@ import Combine
 import CoreGraphics
 
 /// 灵动岛：悬停/单击刘海区域，弹出「更大的刘海」——顶边贴屏幕顶、水平居中于刘海、
-/// 尺寸随当前内容模块自适应；一次显示一个内容模块（默认日历），刘海两侧顶部条内药丸切换。
+/// 尺寸随当前内容模块自适应；一次显示一个内容模块（默认日历），卡片左右两侧箭头 /
+/// 面板内双指左右滑动循环切换。
 /// 形状/动画细节见 NotchPanel 类文档。
 ///
 /// 实现要点（结构仿 `DockHoverPreviewController`）：
@@ -495,7 +496,7 @@ final class NotchHotspotController {
         let module = currentSelectedModule()
         panel.present(hotspotTL: detected.hotspotTL, notchTL: detected.notchTL,
                       screen: detected.screen, model: viewModel, module: module,
-                      onSelectModule: { [weak self] in self?.handleSelectModule($0) })
+                      onNavigateModule: { [weak self] in self?.handleStepModule($0) })
         panelShown = true
         lastPresented = (detected.screen, detected.hotspotTL, detected.notchTL)
         updateMonitors()
@@ -515,7 +516,17 @@ final class NotchHotspotController {
         return selectedModule
     }
 
-    /// 顶部药丸切换模块：更新会话状态、重建面板内容并同步数据轮询/日程订阅
+    /// 左右箭头 / 双指左右滑动：按启用模块顺序循环切到上一张（-1）或下一张（+1）
+    private func handleStepModule(_ step: Int) {
+        let modules = NotchContentView.enabledModules
+        guard modules.count > 1, step != 0 else { return }
+        let index = currentSelectedModule().flatMap { modules.firstIndex(of: $0) } ?? 0
+        let count = modules.count
+        let next = ((index + step) % count + count) % count
+        handleSelectModule(modules[next])
+    }
+
+    /// 切换模块（箭头 / 滑动）：更新会话状态、重建面板内容并同步数据轮询/日程订阅
     private func handleSelectModule(_ module: NotchContentView.Module) {
         guard module != selectedModule else { return }
         selectedModule = module
