@@ -1004,10 +1004,12 @@ private struct ResourceSparkline: View {
 /// 尺寸 = 设置的展开宽/高（固定值，不随内容变化），内容显示在刘海以下区域。
 /// 动画（NotchSpringAnimator 只驱动 frame，全程不透明：形状渐变本身就是全部视觉效果，
 /// 无透明度渐变，DEV-022）：
-/// - 展开单段连续：从迷你刘海弹簧直达终点，宽分量先冲出（带过冲）、高分量慢半拍
-///   平滑跟随（expandTuning 差异化调参），中途不停顿、无中间回弹；
-/// - 收起镜像单段：宽度先收拢、高度跟上回到迷你刘海 → 动画结束才 orderOut；
-/// - 打断续接（DEV-023）：弹簧以当前值/速度重定向，在途 completion 作废。
+/// - 展开两段连续：段1 横向拉到 80% 终宽（临界阻尼无回弹，高度停在迷你刘海高）→
+///   引导分量进度达 handoffProgress 时以当前值/速度无缝续接段2 纵向+剩余横向
+///   （无停顿，视觉上是一段连续运动，仅终点一次过冲）；
+/// - 收起镜像两段：段1 高度收到刘海高（临界阻尼）→ 无缝续接段2 横向收拢回迷你刘海
+///   → 动画结束才 orderOut；
+/// - 打断续接（DEV-023）：弹簧以当前值/速度重定向，在途 handoff/completion 作废。
 /// 起点/收起终点的迷你刘海 = 比真刘海小一圈（顶边贴屏幕顶、左右/底各内缩），
 /// 完全藏在刘海硬件后不可见。
 final class NotchPanel: NSPanel {
@@ -1017,6 +1019,10 @@ final class NotchPanel: NSPanel {
     static let bottomCornerBase: CGFloat = 14
     /// 迷你刘海相对真刘海的内缩（左右/底部；顶边贴屏幕顶）
     static let startInset: CGFloat = 6
+    /// 段1 横向目标宽度比例（终宽的 80%），到位前以 handoff 无缝续接剩余横向+纵向
+    static let stageOneWidthFraction: CGFloat = 0.8
+    /// 段1 引导分量（展开=宽度/收起=高度）位移进度达到该比例即交接下一段
+    static let handoffProgress: CGFloat = 0.85
     private lazy var springAnimator = NotchSpringAnimator(panel: self)
     /// 弹簧正在趋向的目标 frame（present/dismiss 更新）。
     /// 控制器保活/点击判定用这个，而不是 present() 返回时刻的瞬时 frame：
@@ -1109,7 +1115,7 @@ final class NotchPanel: NSPanel {
 
     /// 悬停延时到期 / 单击热区后展示：顶边贴屏幕顶、水平居中于刘海、尺寸 = 设置展开宽/高。
     /// 每次 present 重建 contentView（模型重置到今天，同时取最新内容设置）。
-    /// 单段连续展开见类文档；打断续接走 isVisible 分支单段重定向。
+    /// 两段连续展开见类文档；打断续接走 isVisible 分支单段重定向。
     func present(hotspotTL: CGRect, notchTL: CGRect, screen: NSScreen,
                  model: NotchCalendarViewModel, module: NotchContentView.Module?,
                  onSelectModule: @escaping (NotchContentView.Module) -> Void) {
@@ -1135,24 +1141,41 @@ final class NotchPanel: NSPanel {
             springAnimator.animate(to: finalFrame)
         } else {
             let startFrame = Self.miniNotchFrame(notchTL: notchTL, unionMaxY: unionMaxY)
-            // 单段连续弹簧直达终点：宽分量先冲出、高分量慢半拍跟随（expandTuning），
-            // 中途不停顿、无中间回弹；全程不透明（DEV-022），形状渐变本身就是全部视觉效果
             setFrame(startFrame, display: false)
             alphaValue = 1
             orderFront(nil)
             invalidateShadow()
-            springAnimator.animate(to: finalFrame)
+            // 两段连续（中途不停顿、无中间回弹，全程不透明 DEV-022）：段1 横向拉到
+            // 80% 终宽（临界阻尼，高度停在迷你刘海高）→ 宽度进度达 handoffProgress
+            // 时以当前值/速度无缝续接段2 纵向+剩余横向（仅终点一次过冲）。
+            // 展开宽度设得较小（80% 终宽 ≤ 迷你刘海宽）时无横向段，直接单段展开
+            let stageOneWidth = finalFrame.width * Self.stageOneWidthFraction
+            if stageOneWidth > startFrame.width + 1 {
+                let stageOne = NSRect(x: notchTL.midX - stageOneWidth / 2,
+                                      y: unionMaxY - startFrame.height,
+                                      width: stageOneWidth, height: startFrame.height)
+                springAnimator.animate(to: stageOne,
+                                       handoff: .init(targetFrame: finalFrame,
+                                                      progress: Self.handoffProgress))
+            } else {
+                springAnimator.animate(to: finalFrame)
+            }
         }
     }
 
-    /// 收起（镜像展开的单段连续弹簧）：宽度先收拢、高度跟上回到迷你刘海，
-    /// 动画结束才 orderOut。全程不透明。控制器状态在 hidePanel 即时更新，期间再 present
-    /// 会以单段重定向无缝续接展开（在途 completion 作废，orderOut 不会执行）。
+    /// 收起（镜像展开的两段连续弹簧）：段1 高度收到刘海高（临界阻尼无回弹、宽度不动）→
+    /// 进度达 handoffProgress 时无缝续接段2 横向收拢回迷你刘海，动画结束才 orderOut。
+    /// 全程不透明。控制器状态在 hidePanel 即时更新，期间再 present 会以单段重定向
+    /// 无缝续接展开（在途 handoff/completion 作废，orderOut 不会执行）。
     func dismiss(notchTL: CGRect) {
         let unionMaxY = NSScreen.screens.reduce(CGRect.null) { $0.union($1.frame) }.maxY
         let notchFrame = Self.miniNotchFrame(notchTL: notchTL, unionMaxY: unionMaxY)
         targetFrame = notchFrame
-        springAnimator.animate(to: notchFrame, collapse: true) { [weak self] in
+        let stageOne = NSRect(x: notchTL.midX - frame.width / 2, y: unionMaxY - notchFrame.height,
+                              width: frame.width, height: notchFrame.height)
+        springAnimator.animate(to: stageOne, collapse: true,
+                               handoff: .init(targetFrame: notchFrame,
+                                              progress: Self.handoffProgress)) { [weak self] in
             self?.orderOut(nil)
         }
     }
@@ -1305,32 +1328,48 @@ private final class NotchShapeContainerView: NSView {
 /// macOS 对窗口 frame 没有公开的弹簧动画 API（NSAnimationContext 仅支持贝塞尔曲线，
 /// animator() 可动画属性的限制见 PITFALLS_DEV.md DEV-016），这里在主线程用定时器对弹簧
 /// 微分方程做半隐式欧拉积分后直接 setFrame。response + dampingFraction 语义同 UIKit，
-/// dampingFraction < 1 带过冲回弹。分量差异化调参见 expandTuning/collapseTuning。
+/// dampingFraction < 1 带过冲回弹。分量差异化调参：终点段/打断续接用
+/// expandTuning/collapseTuning，段1 引导段用 stageOneExpandTuning/stageOneCollapseTuning。
 /// 「刘海生长/缩回」全程必须不透明：任何 alpha 淡入淡出都会让早期生长不可见、
 /// 被感知成「从一侧滑入」（DEV-022），形状渐变本身就是全部视觉效果。
 /// 动画进行中再次 animate：各分量以当前值/速度为起点重定向（展开↔收起互相打断无缝续接），
-/// 旧动画未执行的 completion 作废。
+/// 旧动画未执行的 handoff 与 completion 作废。
 private final class NotchSpringAnimator {
     /// 分量弹簧调参（response + 阻尼比），顺序对齐 springs：x, y, width, height。
     /// 灵动岛式液体拉伸：宽先冲出（带过冲）、高慢半拍平滑下填、位置快速就位几乎不晃；
     /// 单一组参数（四分量同步、阻尼比 0.72 过冲仅 ~4%）会被感知成线性生长。
-    private struct SpringTuning {
+    /// 单一分量调参；嵌在 file-private 类里，类型仅本文件可见
+    struct SpringTuning {
         let response: TimeInterval
         let dampingFraction: CGFloat
     }
-    /// 展开/重定向
+    /// 展开段2/重定向（终点段：宽先冲出带过冲、高慢半拍跟上）
     private static let expandTuning: [SpringTuning] = [
         .init(response: 0.32, dampingFraction: 0.90),   // x
         .init(response: 0.32, dampingFraction: 0.90),   // y
         .init(response: 0.38, dampingFraction: 0.72),   // width：先冲出，~5% 过冲
         .init(response: 0.52, dampingFraction: 0.78),   // height：慢半拍跟上
     ]
-    /// 收起：宽度更快折回，更利落
+    /// 收起段2/重定向（终点段：宽度更快折回，更利落）
     private static let collapseTuning: [SpringTuning] = [
         .init(response: 0.32, dampingFraction: 0.90),   // x
         .init(response: 0.32, dampingFraction: 0.90),   // y
         .init(response: 0.32, dampingFraction: 0.72),   // width：更快收拢
         .init(response: 0.52, dampingFraction: 0.78),   // height
+    ]
+    /// 段1 引导段（handoff 交接前）：临界阻尼无回弹——先横拉/先纵收本身不带过冲，
+    /// 回弹只留给交接后的终点段；本段静止分量的参数无实际作用
+    static let stageOneExpandTuning: [SpringTuning] = [
+        .init(response: 0.32, dampingFraction: 1.0),    // x
+        .init(response: 0.32, dampingFraction: 1.0),    // y
+        .init(response: 0.34, dampingFraction: 1.0),    // width：横向拉开（临界阻尼）
+        .init(response: 0.52, dampingFraction: 0.78),   // height（本段不动）
+    ]
+    static let stageOneCollapseTuning: [SpringTuning] = [
+        .init(response: 0.32, dampingFraction: 1.0),    // x
+        .init(response: 0.32, dampingFraction: 1.0),    // y
+        .init(response: 0.32, dampingFraction: 1.0),    // width（本段不动）
+        .init(response: 0.36, dampingFraction: 1.0),    // height：纵向先收（临界阻尼）
     ]
     /// settle 阈值：收紧到 0.25pt / 2pt·s⁻¹，避免尾部带速急停的微顿
     private static let valueEpsilon: CGFloat = 0.25
@@ -1378,6 +1417,18 @@ private final class NotchSpringAnimator {
     private var timer: Timer?
     private weak var panel: NotchPanel?
 
+    /// 中途交接（两段连续动画）：段1 引导分量位移进度达 progress 时，
+    /// 以当前值/速度无缝重定向到 targetFrame（无停顿、无中间回弹）
+    struct Handoff {
+        let targetFrame: NSRect
+        let progress: CGFloat
+    }
+    private var pendingHandoff: Handoff?
+    private var handoffCollapse = false
+    /// 引导分量（展开=宽度 / 收起=高度）段1 起点/目标值，tick 里按位移进度判定交接时机
+    private var handoffStartValue: CGFloat = 0
+    private var handoffLegTarget: CGFloat = 0
+
     init(panel: NotchPanel) {
         self.panel = panel
     }
@@ -1388,13 +1439,37 @@ private final class NotchSpringAnimator {
 
     /// 启动/重定向动画（只驱动窗口 frame）。必须主线程调用（setFrame）。
     /// collapse = 收起方向（宽度弹簧加速，折回更利落）。
-    func animate(to targetFrame: NSRect, collapse: Bool = false, completion: (() -> Void)? = nil) {
+    /// handoff 非空时为两段连续动画：段1 用临界阻尼引导段调参弹向 targetFrame，
+    /// 引导分量进度达 handoff.progress 时无缝续接到交接目标（默认终点段调参）。
+    func animate(to targetFrame: NSRect, collapse: Bool = false,
+                 handoff: Handoff? = nil, completion: (() -> Void)? = nil) {
         guard let panel else { return }
         self.completion = nil // 被打断动画的收尾作废
+        pendingHandoff = nil
 
+        let tuning: [SpringTuning]
+        if handoff != nil {
+            tuning = collapse ? Self.stageOneCollapseTuning : Self.stageOneExpandTuning
+        } else {
+            tuning = collapse ? Self.collapseTuning : Self.expandTuning
+        }
+        rebuildSprings(target: targetFrame, tuning: tuning)
+
+        if let handoff {
+            pendingHandoff = handoff
+            handoffCollapse = collapse
+            handoffStartValue = collapse ? panel.frame.height : panel.frame.width
+            handoffLegTarget = collapse ? targetFrame.height : targetFrame.width
+        }
+        self.completion = completion
+        startTimerIfNeeded()
+    }
+
+    /// 以当前值/速度重建四分量弹簧（打断续接与 handoff 交接共用；不动 completion）
+    private func rebuildSprings(target: NSRect, tuning: [SpringTuning]) {
+        guard let panel else { return }
         let frame = panel.frame
         let previous = springs?.count == 4 ? springs : nil
-        let tuning = collapse ? Self.collapseTuning : Self.expandTuning
 
         func make(_ index: Int, _ initial: CGFloat, _ target: CGFloat) -> Spring {
             if let previous {
@@ -1410,12 +1485,11 @@ private final class NotchSpringAnimator {
         }
 
         springs = [
-            make(0, frame.minX, targetFrame.minX),
-            make(1, frame.minY, targetFrame.minY),
-            make(2, frame.width, targetFrame.width),
-            make(3, frame.height, targetFrame.height),
+            make(0, frame.minX, target.minX),
+            make(1, frame.minY, target.minY),
+            make(2, frame.width, target.width),
+            make(3, frame.height, target.height),
         ]
-        self.completion = completion
         startTimerIfNeeded()
     }
 
@@ -1452,6 +1526,20 @@ private final class NotchSpringAnimator {
         self.springs = springs
         panel.setFrame(NSRect(x: springs[0].value, y: springs[1].value,
                               width: springs[2].value, height: springs[3].value), display: true)
+
+        // 中途交接：引导分量进度达阈值 → 立即以当前值/速度续接到交接目标（无停顿无回弹）
+        if let handoff = pendingHandoff {
+            let current = handoffCollapse ? springs[3].value : springs[2].value
+            let travel = handoffLegTarget - handoffStartValue
+            let progress = abs(travel) > 0.5 ? (current - handoffStartValue) / travel : 1
+            if progress >= handoff.progress {
+                pendingHandoff = nil
+                rebuildSprings(target: handoff.targetFrame,
+                               tuning: handoffCollapse ? Self.collapseTuning : Self.expandTuning)
+                return // 交接当帧弹簧已重建，不参与落定判定
+            }
+        }
+
         if allSettled {
             stopTimer()
             let completion = self.completion
@@ -1464,5 +1552,6 @@ private final class NotchSpringAnimator {
         timer?.invalidate()
         timer = nil
         springs = nil
+        pendingHandoff = nil
     }
 }
