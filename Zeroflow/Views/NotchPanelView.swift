@@ -613,7 +613,8 @@ struct NotchContentView: View {
                          text: percentText(.gpu),
                          size: Self.gpuRingSize,
                          lineWidth: Self.gpuRingLineWidth,
-                         fontSize: 10)
+                         fontSize: 10,
+                         tint: ringTint(.gpu))
             Text(NotchResourceItem.gpu.title)
                 .font(.system(size: 9.5))
                 .foregroundColor(.secondary)
@@ -635,7 +636,8 @@ struct NotchContentView: View {
                          text: percentText(item),
                          size: Self.primaryRingSize,
                          lineWidth: Self.primaryRingLineWidth,
-                         fontSize: 15)
+                         fontSize: 15,
+                         tint: ringTint(item))
             Text(item.title)
                 .font(.system(size: 11))
                 .foregroundColor(.secondary)
@@ -696,6 +698,16 @@ struct NotchContentView: View {
                 .minimumScaleFactor(0.8)
         }
         .frame(width: width)
+    }
+
+    /// 环形仪表色相：CPU 蓝 / 内存绿 / GPU 紫，三项一眼可分（HUD 固定深色，用系统色相即可）
+    private func ringTint(_ item: NotchResourceItem) -> Color {
+        switch item {
+        case .cpu: return .blue
+        case .memory: return .green
+        case .gpu: return .purple
+        case .disk, .network: return .accentColor
+        }
     }
 
     /// 百分比项当前用量 0–1；nil = 暂不可用（只显示空轨道，环心同步显示「—」）
@@ -1076,14 +1088,16 @@ struct NotchContentView: View {
     }
 }
 
-/// 资源项的环形仪表：灰色轨道 = 无用量参照，彩色弧 = 当前用量（自 12 点顺时针），
-/// 环心为数值文字（不可用时显示「—」）；用量变化做 0.4s 缓出插值（2s 采样不至于跳变）
+/// 资源项的环形仪表：灰色轨道 = 无用量参照，彩色弧（各资源项各自的色相）= 当前用量
+/// （自 12 点顺时针），环心为数值文字（不可用时显示「—」）；用量变化做 0.4s 缓出插值
+/// （2s 采样不至于跳变）
 private struct ResourceRing: View {
     let progress: Double?
     let text: String
     let size: CGFloat
     let lineWidth: CGFloat
     let fontSize: CGFloat
+    let tint: Color
 
     var body: some View {
         ZStack {
@@ -1094,7 +1108,7 @@ private struct ResourceRing: View {
                 Circle()
                     .inset(by: lineWidth / 2)
                     .trim(from: 0, to: min(1, max(0, progress)))
-                    .stroke(Color.accentColor,
+                    .stroke(tint,
                             style: StrokeStyle(lineWidth: lineWidth, lineCap: .round))
                     .rotationEffect(.degrees(-90))
                     .animation(.easeOut(duration: 0.4), value: progress)
