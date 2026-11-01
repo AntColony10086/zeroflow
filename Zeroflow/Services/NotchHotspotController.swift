@@ -3,7 +3,9 @@ import ApplicationServices
 import Combine
 import CoreGraphics
 
-/// 灵动岛：悬停/单击刘海区域，磨砂面板以 iOS 风格弹簧从刘海「生长」展开/缩回（v1 内容 = 日历月视图）。
+/// 灵动岛：悬停/单击刘海区域，弹出「更大的刘海」——顶边贴屏幕顶、水平居中于刘海、
+/// 尺寸 = 设置展开宽/高；一次显示一个内容模块（默认日历），刘海两侧顶部条内药丸切换。
+/// 形状/动画细节见 NotchPanel 类文档。
 ///
 /// 实现要点（结构仿 `DockHoverPreviewController`）：
 /// - listen-only CGEventTap 监听 mouseMoved / mouseDown / keyDown，绝不吞事件：
@@ -66,6 +68,8 @@ final class NotchHotspotController {
     private var panelShown = false
     private var notchScreen: NSScreen?
     private var dayEventsCancellable: AnyCancellable?
+    /// 会话内记住的显示模块（默认日历，重启回默认；不落盘）
+    private var selectedModule: NotchContentView.Module?
     /// 最近一次 present 的热区/刘海矩形/屏幕（日程变化后 refit 复用；收起动画缩回刘海用 notchTL）
     private var lastPresented: (screen: NSScreen, hotspotTL: CGRect, notchTL: CGRect)?
 
@@ -488,11 +492,13 @@ final class NotchHotspotController {
         let viewModel = ensureModel()
         viewModel.reset()
         let panel = ensurePanel()
+        let module = currentSelectedModule()
         panel.present(hotspotTL: detected.hotspotTL, notchTL: detected.notchTL,
-                      screen: detected.screen, model: viewModel)
+                      screen: detected.screen, model: viewModel, module: module,
+                      onSelectModule: { [weak self] in self?.handleSelectModule($0) })
         panelShown = true
         lastPresented = (detected.screen, detected.hotspotTL, detected.notchTL)
-        startMonitors()
+        updateMonitors()
         startDayEventsRefit(model: viewModel)
         lock.lock()
         // 用弹簧目标 frame，而非 present() 返回时刻的瞬时 frame（动画刚从刘海开始）
@@ -503,14 +509,27 @@ final class NotchHotspotController {
         }
     }
 
-    /// 按当前启用模块启动数据轮询（仅面板可见期间运行，hidePanel 时全部停止）
-    private func startMonitors() {
-        if SettingsStore.shared.notchShowResources {
-            SystemResourceMonitor.shared.setActive(true)
-        }
-        if SettingsStore.shared.notchShowMusic {
-            NowPlayingMonitor.shared.setActive(true)
-        }
+    /// 会话内选择的显示模块；被禁用/失效时回退默认（日历优先，无启用模块 = nil → 空状态）
+    private func currentSelectedModule() -> NotchContentView.Module? {
+        let enabled = NotchContentView.enabledModules
+        if let selected = selectedModule, enabled.contains(selected) { return selected }
+        selectedModule = NotchContentView.defaultModule
+        return selectedModule
+    }
+
+    /// 顶部药丸切换模块：更新会话状态、重建面板内容并同步数据轮询/日程订阅
+    private func handleSelectModule(_ module: NotchContentView.Module) {
+        guard module != selectedModule else { return }
+        selectedModule = module
+        panel?.switchModule(to: module)
+        updateMonitors()
+        if let model { startDayEventsRefit(model: model) }
+    }
+
+    /// 按当前显示模块启停数据轮询（仅面板可见期间运行，hidePanel 时全部停止）
+    private func updateMonitors() {
+        SystemResourceMonitor.shared.setActive(selectedModule == .resources)
+        NowPlayingMonitor.shared.setActive(selectedModule == .music)
     }
 
     private func ensurePanel() -> NotchPanel {
@@ -527,26 +546,23 @@ final class NotchHotspotController {
         return model
     }
 
-    /// 日历模块可见时订阅日程变化：日程异步加载完成 / 切换选中日期后重测面板高度
-    /// （面板尺寸在日程加载前测量，首次弹出与切换日期都靠这里补齐真实高度）
+    /// 日历模块显示中时订阅日程变化：日程异步加载完成 / 切换选中日期后重测内容布局
+    /// （面板尺寸固定，重测只为更新缩放/密度与卡片自然尺寸）
     private func startDayEventsRefit(model: NotchCalendarViewModel) {
         dayEventsCancellable = nil
-        guard NotchContentView.orderedVisibleModules.contains(.calendar) else { return }
+        guard selectedModule == .calendar else { return }
         dayEventsCancellable = model.$dayEvents
             .removeDuplicates()
             .sink { [weak self] _ in self?.refitPanel() }
     }
 
-    /// 重测面板：顶边贴刘海不动，只调高度；同步保活判定用的 panelFrameTL
+    /// 重测内容：面板尺寸固定不变，只重建 contentView
     private func refitPanel() {
         lock.lock()
         let visible = phase == .visible
         lock.unlock()
-        guard visible, let panel, let model, let presented = lastPresented else { return }
-        panel.refit(hotspotTL: presented.hotspotTL, screen: presented.screen, model: model)
-        lock.lock()
-        panelFrameTL = toTopLeftCoords(panel.targetFrame)
-        lock.unlock()
+        guard visible, let panel, let model, lastPresented != nil else { return }
+        panel.refit(model: model)
     }
 
     // MARK: - 刘海探测（主线程）

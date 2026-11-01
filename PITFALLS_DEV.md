@@ -116,3 +116,18 @@
 - **Pitfall:** 面板「收起弹簧未播完→再次弹出」走打断路径时调用了 `setContentSize`(最终尺寸):窗口几何绕过弹簧直接跳变(尺寸瞬间到位、按原点锚定另一侧瞬移),随后位置再弹簧滑到位 → 用户看到「全尺寸面板从屏幕一侧平移到中间」,与弹簧动画预期完全不符。
 - **Cause:** `setContentSize`/`setFrame` 是瞬时几何赋值;打断场景窗口处于中间态,直接改尺寸等于把「在途位移」换成「瞬移 + 平移收尾」。`setContentSize` 还按窗口原点(左下)锚定缩放,另一侧边缘瞬移,平移感更明显。
 - **Prevention:** 打断动画只做一件事——弹簧目标重定向(以当前值/速度续接);任何路径都不要在动画在途时用 `setContentSize`/`setFrame` 改尺寸。`present` 的起始定位(setFrame 刘海矩形)只放在「窗口不可见」的全新展开分支。参考 `NotchPanel.present`。
+
+## DEV-024: NSHostingView 经约束/glass.contentView 挂载会把窗口宽高反向钳死
+- **Pitfall:** 灵动岛面板弹簧 setFrame 每帧改窗口尺寸,内容却不动:只有原点生效,宽高被「静默锁死」在 SwiftUI 的固定尺寸上,「从刘海生长」退化成全尺寸面板平移。
+- **Cause:** 把 `NSHostingView` 赋给 `NSGlassEffectView.contentView` 或对 hosting 用 Auto Layout 约束后,SwiftUI 固定 `.frame` 尺寸会经约束链/玻璃层反向钳制窗口的 contentLayoutGuide,窗口 setFrame 的宽高分量被覆盖。
+- **Prevention:** hosting 必须以 `addSubview` + `autoresizingMask = [.width, .height]` 跟随宿主视图,宿主铺满 contentView;绝不能用约束挂载。参考 `NotchPanel.makeContentView`。
+
+## DEV-025: NSView 没有 viewDidChangeBounds 可重写,bounds 变化的回调是 layout()
+- **Pitfall:** 想在窗口每帧改尺寸时同步重建 CAShapeLayer 遮罩路径,重写 `viewDidChangeBounds()` 直接编译错 "method does not override any method from its superclass"(AppKit swiftinterface 里根本没有这个方法)。
+- **Cause:** 该方法名与 UIView 的直觉混淆;NSView 的几何变化回调就是 `layout()`,bounds 尺寸变化时 AppKit 会触发它。
+- **Prevention:** 跟随窗口/容器尺寸的 layer 工作(遮罩路径、子图层 frame)统一放 `override func layout()`;若担心首帧,可在初始化时用已知目标尺寸先算一遍。CAShapeLayer 每帧改 path 记得设 `actions = ["path": NSNull(), ...]` 禁隐式动画,否则遮罩滞后于弹簧。
+
+## DEV-026: layer-backed NSView 的图层坐标系跟随 isFlipped,非 flipped 视图 = y 向上
+- **Pitfall:** 手写 CGPath 给 NSView 的 layer 做遮罩(iOS 思维默认左上原点 y 向下),在 macOS 上路径垂直翻转,圆角上下颠倒。
+- **Cause:** macOS 图层坐标系不是固定 y 向下:`isGeometryFlipped` 跟随视图的 `isFlipped`(默认 false → 原点左下、y 向上;flipped 视图 → true)。与 UIKit 相反方向的坑。
+- **Prevention:** 写路径前先确认宿主视图 isFlipped;非 flipped 视图按 y 向上写(底边在 y=0)。实测方法:`swift` 脚本建 `NSView` + `wantsLayer = true`,打印 `layer?.isGeometryFlipped`(注意 Swift 里是 `isGeometryFlipped` 不是 `geometryFlipped`,后者编译错)。

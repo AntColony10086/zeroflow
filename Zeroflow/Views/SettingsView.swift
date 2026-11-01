@@ -290,11 +290,6 @@ struct SettingsView: View {
 
     // MARK: - 灵动岛
 
-    /// 已勾选 2 个内容模块时禁用未勾选的开关（面板最多同时显示 2 个）
-    private var isMaxNotchModulesSelected: Bool {
-        [store.notchShowCalendar, store.notchShowResources, store.notchShowMusic].filter { $0 }.count >= 2
-    }
-
     /// 增减资源项并写回（Store 端按固定顺序过滤）
     private func toggleNotchResourceItem(_ item: NotchResourceItem, on: Bool) {
         var items = store.notchResourceItems
@@ -319,7 +314,7 @@ struct SettingsView: View {
             } header: {
                 Text(L10n.tr("启用"))
             } footer: {
-                Text(L10n.tr("鼠标悬停或单击屏幕顶部刘海区域，从刘海向下弹出日历面板；点击面板外部或按 Esc 收起。仅支持带刘海的机型。"))
+                Text(L10n.tr("鼠标悬停或单击屏幕顶部刘海区域，刘海扩大并显示内容模块；点击面板外部或按 Esc 收起。仅支持带刘海的机型。"))
             }
 
             if store.notchEnabled {
@@ -336,7 +331,7 @@ struct SettingsView: View {
                         ), in: 100...1000, step: 50)
                     }
                     VStack(alignment: .leading, spacing: 6) {
-                        LabeledContent(L10n.tr("最大宽度")) {
+                        LabeledContent(L10n.tr("展开宽度")) {
                             Text("\(store.notchMaxWidth) pt")
                                 .monospacedDigit()
                                 .foregroundColor(.secondary)
@@ -347,7 +342,7 @@ struct SettingsView: View {
                         ), in: 200...1200, step: 10)
                     }
                     VStack(alignment: .leading, spacing: 6) {
-                        LabeledContent(L10n.tr("最大高度")) {
+                        LabeledContent(L10n.tr("展开高度")) {
                             Text("\(store.notchMaxHeight) pt")
                                 .monospacedDigit()
                                 .foregroundColor(.secondary)
@@ -360,20 +355,17 @@ struct SettingsView: View {
                 } header: {
                     Text(L10n.tr("选项"))
                 } footer: {
-                    Text(L10n.tr("鼠标停留在刘海区域多久后弹出面板；单击刘海区域可立即弹出，移出后同样按此时长延迟收起。显示 2 个内容模块时面板固定为最大尺寸（两卡片各占一半宽度），单模块时按内容收缩；内容超出面板时整体等比缩小以完整显示。"))
+                    Text(L10n.tr("鼠标停留在刘海区域多久后弹出面板；单击刘海区域可立即弹出，移出后同样按此时长延迟收起。展开宽/高即弹出后的面板尺寸（内容显示在刘海下方）；内容超出面板时等比缩小或滚动。"))
                 }
 
                 Section {
                     Toggle(L10n.tr("日历"), isOn: $store.notchShowCalendar)
-                        .disabled(isMaxNotchModulesSelected && !store.notchShowCalendar)
                     Toggle(L10n.tr("系统资源"), isOn: $store.notchShowResources)
-                        .disabled(isMaxNotchModulesSelected && !store.notchShowResources)
                     Toggle(L10n.tr("正在播放"), isOn: $store.notchShowMusic)
-                        .disabled(isMaxNotchModulesSelected && !store.notchShowMusic)
                 } header: {
                     Text(L10n.tr("显示内容"))
                 } footer: {
-                    Text(L10n.tr("弹出面板中显示的内容模块，最多同时显示 2 个。全部关闭时，面板仍会弹出并提示添加显示内容。"))
+                    Text(L10n.tr("弹出面板中显示的内容模块，一次显示一个，可通过面板顶部刘海两侧的按钮切换（默认日历）。全部关闭时，面板仍会弹出并提示添加显示内容。"))
                 }
 
                 if store.notchShowResources {
