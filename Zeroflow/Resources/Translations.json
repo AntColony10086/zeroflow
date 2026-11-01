@@ -529,15 +529,10 @@
     "en": "Enable Notch Panel",
     "ja": "ノッチパネルを有効にする"
   },
-  "鼠标悬停或单击屏幕顶部刘海区域，从刘海向下弹出日历面板；点击面板外部或按 Esc 收起。仅支持带刘海的机型。": {
-    "zh-Hans": "鼠标悬停或单击屏幕顶部刘海区域，从刘海向下弹出日历面板；点击面板外部或按 Esc 收起。仅支持带刘海的机型。",
-    "en": "Hover over or click the notch at the top of the screen to drop down a calendar panel; click outside the panel or press Esc to dismiss. Only works on Macs with a notch.",
-    "ja": "画面上部のノッチにカーソルを合わせるかクリックすると、カレンダーパネルが下に展開します。パネルの外側をクリックするか Esc で閉じます。ノッチ搭載機種のみ対応。"
-  },
-  "鼠标停留在刘海区域多久后弹出面板；单击刘海区域可立即弹出。": {
-    "zh-Hans": "鼠标停留在刘海区域多久后弹出面板；单击刘海区域可立即弹出。",
-    "en": "How long the pointer must stay on the notch before the panel appears; clicking the notch opens it instantly.",
-    "ja": "ノッチ上に何ミリ秒とどまるとパネルを表示するか。クリックでは即座に開きます。"
+  "鼠标悬停或单击屏幕顶部刘海区域，刘海扩大并显示内容模块；点击面板外部或按 Esc 收起。仅支持带刘海的机型。": {
+    "zh-Hans": "鼠标悬停或单击屏幕顶部刘海区域，刘海扩大并显示内容模块；点击面板外部或按 Esc 收起。仅支持带刘海的机型。",
+    "en": "Hover over or click the notch at the top of the screen to expand it and show a content module; click outside the panel or press Esc to dismiss. Only works on Macs with a notch.",
+    "ja": "画面上部のノッチにカーソルを合わせるかクリックすると、ノッチが拡大してコンテンツモジュールを表示します。パネルの外側をクリックするか Esc で閉じます。ノッチ搭載機種のみ対応。"
   },
   "显示内容": {
     "zh-Hans": "显示内容",
@@ -609,30 +604,25 @@
     "en": "Resource Items",
     "ja": "リソース項目"
   },
-  "系统资源模块中显示的项目；CPU/内存/GPU 显示用量进度条（灰色为总量），磁盘/网络数值旁的曲线为最近约 1 分钟的速率趋势。": {
-    "zh-Hans": "系统资源模块中显示的项目；CPU/内存/GPU 显示用量进度条（灰色为总量），磁盘/网络数值旁的曲线为最近约 1 分钟的速率趋势。",
-    "en": "Items shown in the System Resources module; CPU/Memory/GPU show a usage bar (gray = total), while the curves beside Disk/Network show roughly the last minute of transfer rate.",
-    "ja": "システムリソースモジュールに表示する項目。CPU/メモリ/GPU は使用率バー（灰色は全体量）を表示し、ディスク/ネットワークの数値の横の曲線は直近約 1 分の転送速度の推移です。"
+  "系统资源模块中显示的项目；CPU 和内存为环形仪表（环心为使用率），GPU 为次要小环，磁盘/网络附最近约 1 分钟的趋势曲线。": {
+    "zh-Hans": "系统资源模块中显示的项目；CPU 和内存为环形仪表（环心为使用率），GPU 为次要小环，磁盘/网络附最近约 1 分钟的趋势曲线。",
+    "en": "Items shown in the System Resources module; CPU and Memory are rings with the usage in the center, GPU is a smaller secondary ring, and Disk/Network include a curve of roughly the last minute.",
+    "ja": "システムリソースモジュールに表示する項目。CPU とメモリはリング（中心に使用率）、GPU は小さめの二次リング、ディスク/ネットワークには直近約 1 分の推移グラフを表示します。"
   },
-  "最大宽度": {
-    "zh-Hans": "最大宽度",
-    "en": "Maximum Width",
-    "ja": "最大幅"
+  "上一个": {
+    "zh-Hans": "上一个",
+    "en": "Previous",
+    "ja": "前へ"
   },
-  "最大高度": {
-    "zh-Hans": "最大高度",
-    "en": "Maximum Height",
-    "ja": "最大高さ"
+  "下一个": {
+    "zh-Hans": "下一个",
+    "en": "Next",
+    "ja": "次へ"
   },
-  "鼠标停留在刘海区域多久后弹出面板；单击刘海区域可立即弹出。显示 2 个内容模块时面板固定为最大尺寸（两卡片各占一半宽度），单模块时按内容收缩；内容超出面板时整体等比缩小以完整显示。": {
-    "zh-Hans": "鼠标停留在刘海区域多久后弹出面板；单击刘海区域可立即弹出。显示 2 个内容模块时面板固定为最大尺寸（两卡片各占一半宽度），单模块时按内容收缩；内容超出面板时整体等比缩小以完整显示。",
-    "en": "How long the pointer must stay on the notch before the panel appears; clicking the notch opens it instantly. With 2 content modules the panel uses the maximum size (each card takes half the width); with a single module it shrinks to fit its content. Oversized content is scaled down proportionally to stay fully visible.",
-    "ja": "ホバーしてからパネルが表示されるまでの時間。ノッチをクリックすると即座に開きます。コンテンツモジュールを 2 つ表示する場合はパネルが最大サイズで固定され（各カードが幅の半分ずつ）、1 つの場合は内容に合わせて収縮します。収まりきらない内容は等比縮小して全体を表示します。"
-  },
-  "弹出面板中显示的内容模块，最多同时显示 2 个。全部关闭时，面板仍会弹出并提示添加显示内容。": {
-    "zh-Hans": "弹出面板中显示的内容模块，最多同时显示 2 个。全部关闭时，面板仍会弹出并提示添加显示内容。",
-    "en": "Content modules shown in the panel, up to 2 at a time. With all modules off, the panel still opens and offers to add content.",
-    "ja": "パネルに表示するコンテンツモジュール（最大 2 つ）。すべてオフでもパネルは開き、コンテンツ追加を案内します。"
+  "弹出面板中显示的内容模块，一次显示一个，可通过面板顶部的箭头或双指左右滑动循环切换（默认日历）。全部关闭时，面板仍会弹出并提示添加显示内容。": {
+    "zh-Hans": "弹出面板中显示的内容模块，一次显示一个，可通过面板顶部的箭头或双指左右滑动循环切换（默认日历）。全部关闭时，面板仍会弹出并提示添加显示内容。",
+    "en": "Content module shown in the panel, one at a time; switch with the two arrows in the panel's top-left corner or a two-finger horizontal swipe (calendar by default), cycling through the enabled modules. With all modules off, the panel still opens and offers to add content.",
+    "ja": "パネルに表示するコンテンツモジュール（1 つずつ表示）。パネル左上の 2 つの矢印ボタンまたは 2 本指の左右スワイプで循環切り替えします（デフォルトはカレンダー）。すべてオフでもパネルは開き、コンテンツ追加を案内します。"
   },
   "没有正在播放的音乐": {
     "zh-Hans": "没有正在播放的音乐",
@@ -693,5 +683,15 @@
     "zh-Hans": "网络",
     "en": "Network",
     "ja": "ネットワーク"
+  },
+  "鼠标停留在刘海区域多久后弹出面板；单击刘海区域可立即弹出，移出后同样按此时长延迟收起。面板尺寸随当前显示内容自动调整。": {
+    "zh-Hans": "鼠标停留在刘海区域多久后弹出面板；单击刘海区域可立即弹出，移出后同样按此时长延迟收起。面板尺寸随当前显示内容自动调整。",
+    "en": "How long the pointer must stay on the notch before the panel appears; clicking the notch opens it instantly, and after the pointer leaves the panel collapses after the same delay. The panel size adapts to the content currently shown.",
+    "ja": "ホバーしてからパネルが表示されるまでの時間。ノッチをクリックすると即座に開き、ポインターが離れると同じ時間だけ待ってから収縮します。パネルのサイズは表示中の内容に合わせて自動調整されます。"
+  },
+  "核": {
+    "zh-Hans": "核",
+    "en": "cores",
+    "ja": "コア"
   }
 }

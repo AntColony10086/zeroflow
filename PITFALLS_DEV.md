@@ -105,7 +105,7 @@
 ## DEV-021: macOS 窗口 frame 弹簧动画无公开 API,需主线程定时器积分实现
 - **Pitfall:** 灵动岛面板要做 iPhone 式「从刘海长出/缩回」的弹簧动画,`NSAnimationContext` 只支持贝塞尔 `CAMediaTimingFunction`,`CASpringTimingFunction` 在 macOS 不公开,窗口 frame 无法用系统弹簧曲线动画。
 - **Cause:** NSWindow 经 animator() 可动画的属性走 Core Animation 但只暴露贝塞尔曲线;UIKit 语义的弹簧参数(response/dampingFraction)动画必须自己积分。
-- **Prevention:** 主线程 120Hz `Timer` 对弹簧微分方程半隐式欧拉积分(k=(2π/response)²,c=2ζ√k)后直接 `setFrame(_:display:)`(dt 远小于稳定域 2/ω 不会发散);打断续接需用各分量当前值与速度重建弹簧、作废旧动画的 completion(否则收起的 orderOut 会在重展开后误触发);Timer 必须加进 `.common` mode,否则面板按钮的事件跟踪期间动画冻结。参考 `NotchPanelView.swift` 的 `NotchSpringAnimator`。
+- **Prevention:** 主线程 120Hz `Timer` 对弹簧微分方程半隐式欧拉积分(k=(2π/response)²,c=2ζ√k)后直接 `setFrame(_:display:)`(dt 远小于稳定域 2/ω 不会发散);打断续接需用各分量当前值与速度重建弹簧、作废旧动画的 completion(否则收起的 orderOut 会在重展开后误触发);Timer 必须加进 `.common` mode,否则面板按钮的事件跟踪期间动画冻结。「先横向后纵向但要连续」的路径感无法靠单弹簧分量参数差做出(各分量同时起跳,前 ~0.3s 都走完大半路程,参数差拉不开视觉差距),必须中途交接:引导段用临界阻尼(ζ=1,无回弹)弹向中间目标,引导分量位移进度达阈值(如 85%)时以当前值/速度重定向到终目标(`NotchSpringAnimator.Handoff`),段间才无停顿无回弹。参考 `NotchPanelView.swift` 的 `NotchSpringAnimator`。
 
 ## DEV-022: 窗口弹簧动画里 alpha 走独立快速淡入,会把「生长」动画感知成「从一侧滑入」
 - **Pitfall:** 灵动岛面板做「从刘海长出」弹簧动画,frame 用弹簧、alpha 用独立的 0.15s 快速淡入:用户看到的是半透明面板从一侧快速滑到位 + 渐显,完全不是「从刘海逐渐长大」,方向感全错。
@@ -116,3 +116,58 @@
 - **Pitfall:** 面板「收起弹簧未播完→再次弹出」走打断路径时调用了 `setContentSize`(最终尺寸):窗口几何绕过弹簧直接跳变(尺寸瞬间到位、按原点锚定另一侧瞬移),随后位置再弹簧滑到位 → 用户看到「全尺寸面板从屏幕一侧平移到中间」,与弹簧动画预期完全不符。
 - **Cause:** `setContentSize`/`setFrame` 是瞬时几何赋值;打断场景窗口处于中间态,直接改尺寸等于把「在途位移」换成「瞬移 + 平移收尾」。`setContentSize` 还按窗口原点(左下)锚定缩放,另一侧边缘瞬移,平移感更明显。
 - **Prevention:** 打断动画只做一件事——弹簧目标重定向(以当前值/速度续接);任何路径都不要在动画在途时用 `setContentSize`/`setFrame` 改尺寸。`present` 的起始定位(setFrame 刘海矩形)只放在「窗口不可见」的全新展开分支。参考 `NotchPanel.present`。
+
+## DEV-024: NSHostingView 经约束/glass.contentView 挂载会把窗口宽高反向钳死
+- **Pitfall:** 灵动岛面板弹簧 setFrame 每帧改窗口尺寸,内容却不动:只有原点生效,宽高被「静默锁死」在 SwiftUI 的固定尺寸上,「从刘海生长」退化成全尺寸面板平移。
+- **Cause:** 把 `NSHostingView` 赋给 `NSGlassEffectView.contentView` 或对 hosting 用 Auto Layout 约束后,SwiftUI 固定 `.frame` 尺寸会经约束链/玻璃层反向钳制窗口的 contentLayoutGuide,窗口 setFrame 的宽高分量被覆盖。
+- **Prevention:** hosting 必须以 `addSubview` + `autoresizingMask = [.width, .height]` 跟随宿主视图,宿主铺满 contentView;绝不能用约束挂载。参考 `NotchPanel.makeContentView`。
+
+## DEV-025: NSView 没有 viewDidChangeBounds 可重写,bounds 变化的回调是 layout()
+- **Pitfall:** 想在窗口每帧改尺寸时同步重建 CAShapeLayer 遮罩路径,重写 `viewDidChangeBounds()` 直接编译错 "method does not override any method from its superclass"(AppKit swiftinterface 里根本没有这个方法)。
+- **Cause:** 该方法名与 UIView 的直觉混淆;NSView 的几何变化回调就是 `layout()`,bounds 尺寸变化时 AppKit 会触发它。
+- **Prevention:** 跟随窗口/容器尺寸的 layer 工作(遮罩路径、子图层 frame)统一放 `override func layout()`;若担心首帧,可在初始化时用已知目标尺寸先算一遍。CAShapeLayer 每帧改 path 记得设 `actions = ["path": NSNull(), ...]` 禁隐式动画,否则遮罩滞后于弹簧。
+
+## DEV-026: layer-backed NSView 的图层坐标系跟随 isFlipped,非 flipped 视图 = y 向上
+- **Pitfall:** 手写 CGPath 给 NSView 的 layer 做遮罩(iOS 思维默认左上原点 y 向下),在 macOS 上路径垂直翻转,圆角上下颠倒。
+- **Cause:** macOS 图层坐标系不是固定 y 向下:`isGeometryFlipped` 跟随视图的 `isFlipped`(默认 false → 原点左下、y 向上;flipped 视图 → true)。与 UIKit 相反方向的坑。
+- **Prevention:** 写路径前先确认宿主视图 isFlipped;非 flipped 视图按 y 向上写(底边在 y=0)。实测方法:`swift` 脚本建 `NSView` + `wantsLayer = true`,打印 `layer?.isGeometryFlipped`(注意 Swift 里是 `isGeometryFlipped` 不是 `geometryFlipped`,后者编译错)。
+
+## DEV-027: 窗口弹簧回弹要锚定尺寸,不能对 origin 做弹簧
+- **Pitfall:** 灵动岛面板的展开/收起弹簧把窗口 frame 当 x/y/width/height 四分量独立积分,过冲时 x/y 也在动(且 x 是左边界、y 是下边界),宽度/高度回弹表现为整个窗口一边平移一边变形,用户感知成「整窗回弹/晃动」,而不是「原地放大到 105% 再回弹到 100%」。
+- **Cause:** origin 是尺寸的函数(顶边中点固定时 x = centerX - w/2、y = topY - h);对 origin 和尺寸分别积弹簧等于把同一个几何约束拆成两个自由度过冲,二者相位/幅度不一致就产生整体位移。仅把 x/y 阻尼调大(0.90)也消不掉宽度过冲带来的边缘扫动。
+- **Prevention:** 位置分量改积「锚点」而非 origin(顶边贴屏幕顶的面板用 centerX/topY,锚点临界阻尼 ζ=1 零回弹),每帧用 `x = centerX - width/2`、`y = topY - height` 反推 frame;尺寸分量保留欠阻尼过冲,窗口就会围绕锚点左右/上下对称外扩再收回,位置全程不动。过冲幅度随交接初速变化,不能直接用 `exp(-πζ/√(1-ζ²))` 推算,应按实际分段交接逻辑跑数值模拟定阻尼比。参考 `NotchPanelView.swift` 的 `NotchSpringAnimator`。
+
+## DEV-028: 灵动岛「面板尺寸随内容自适应」时,测量口径必须与渲染口径一致
+- **Pitfall:** 面板尺寸由内容决定后,沿用旧的测量口径(资源卡传 `columnHeight` 把行拉伸到槽高、渲染端 `.frame(maxWidth: .infinity)` 拉伸列宽)会量出「槽高/槽宽」而不是自然尺寸,面板永远缩不回去;卡片 `contentHeight` 若按「不含内边距」传给渲染端,`padding → .frame(height:)` 会让内容比测量值少 20pt 被压扁。
+- **Cause:** 同一个 SwiftUI 视图在「测量」与「渲染」两条路径复用,列宽/列高/拉伸开关只是参数——测量时传值等于强制几何,不是「上限」;`.padding().frame(height:)` 的 frame 高度包含 padding。
+- **Prevention:** 自然尺寸测量不传拉伸参数(资源行测自然高、列宽用 `naturalColumnWidth(for:)`);渲染列宽取卡片内宽硬值,去掉 `maxWidth: .infinity`;卡片渲染顺序为 `内容 → .frame(height: contentHeight) → .scaleEffect(scale) → .frame(cardW, cardH) → .background(卡片底) → .frame(height: 槽高)`(background/外层 frame 在 scale 之后,缩放只作用于内容、背景始终是卡片框)。`contentHeight` 与测量值同为「含卡片内边距」,缩放系数 = `min(1, cardH / contentHeight)`,宽度方向只重排不缩放。面板宽高 = 卡片 + 可见外边距 + 顶部刘海条,只有屏幕边界(高 −80)兜底;左右留白还要把「遮罩侧墙相对窗口边缘的内缩」算进面板宽(肩弧半径 ∝ 面板宽,需迭代收敛),否则卡片会正好填满可见黑边、看起来没有外边距。`refit` 的比较项必须包含面板/卡片宽高与内容高,否则日程异步加载后尺寸不更新。参考 `NotchPanel.computeLayout` / `NotchContentView.renderedCard`。
+
+## DEV-029: 可见面板按内容改尺寸必须走弹簧,并同步控制器的命中区域
+- **Pitfall:** 面板尺寸随内容自适应后,切换模块 / 日程异步加载(refit)需要改窗口尺寸:若直接 `setFrame` 或只换 contentView 不改窗口,会出现尺寸瞬跳(DEV-023 的整块平移感)或内容与黑底不匹配;控制器缓存的 `panelFrameTL` 若不同步,「点击面板外收起 / 移出保活」仍按旧尺寸判定,窄面板外的大片区域会误收起或点不到。
+- **Cause:** `panelFrameTL` 只在 present 时写入;窗口尺寸的权威值在弹簧里逐帧变化,而命中判定使用弹簧终点 `targetFrame`。
+- **Prevention:** switchModule / refit 后统一走 `applyLayoutFrame`(重建 contentView + `springAnimator.animate(to: 新终 frame)`),并由控制器在调用后 `syncPanelFrame()` 用 `panel.targetFrame` 刷新 `panelFrameTL`;任何可见路径都不得直接 `setFrame`(仅窗口不可见时的首次展开定位可用)。参考 `NotchPanel.applyLayoutFrame` / `NotchHotspotController.syncPanelFrame`。
+
+## DEV-030: 卡片内固定高度的「半块」用 `.frame(height:)` 会静默裁切/溢出
+- **Pitfall:** 资源卡按「上下两块等高」排版时,给单元格写死 `.frame(width:height: 88)`;实际内容(环 56 + 两行文字)是 88.x 高,SwiftUI 不裁切也不报错——内容在固定 frame 里居中溢出,压到分隔线/下半块上,而 `fittingSize` 仍是 88,测量脚本看不出问题(只有「只启用主要项」那张卡量出 123 而不是 122 才暴露)。
+- **Cause:** 固定高度 frame 只是布局约束,不约束绘制;测量口径与真实内容高被 frame 截断,偏差被掩盖。
+- **Prevention:** 等高块用 `.frame(minHeight: X)` 而不是 `.frame(height: X)`:两块仍至少各占半块,内容更高时自然长高、测量同步反映;改完用「只开单项 / 全开」两种组合各量一次高度,差值应符合预期(半块缺失应少一整块的高度)。
+
+## DEV-031: 环形容器 `Circle().stroke` 的描边会溢出 frame
+- **Pitfall:** 直接用 `Circle().stroke(lineWidth:)` 画环,描边以路径为中心向内外各占一半,细看环外侧被相邻视图裁掉一条(尤其放在固定 `frame(width:height:)` 的角落或卡片边缘时)。
+- **Cause:** `Circle()` 的路径内切于 frame,`stroke` 默认居中描边,半径不足时超出边界。
+- **Prevention:** 先 `.inset(by: lineWidth / 2)` 再 `.stroke`(环心文字同理加 `lineWidth` 级内边距),这样描边完整落在 frame 内。参考 `ResourceRing`。
+
+## DEV-032: 资源卡「浮在两主项之间」的次要项要用 ZStack 覆盖,并准备好无留白时的回退
+- **Pitfall:** 想把 GPU 小环放进上半块两环之间的空白正中,若把三个格子塞进同一个 `HStack`,主项环会被挤窄(120 → 92),内存副信息「12.4 GB / 32 GB」被迫缩字,主次感也被拉平。
+- **Cause:** `HStack` 等分宽度会重新分配主项空间;而「空白」本来就在两格之间,不需要新格子。
+- **Prevention:** 主项仍用 `HStack` 等分,次要项作为 `ZStack` 的一层居中覆盖(不占格、主项尺寸不变),尺寸小于主项(GPU 环 34 vs CPU/内存 56)以分层级。只启用一个主项(或没有主项)时中间没有留白,此时必须回退成并排的第二个格子,否则会和主项文字/环重叠;核对重叠要按「垂直区间 × 水平区间」分段看——小环与副信息行不在同一高度带,才允许水平区间相邻。加宽列(`resourcesColumnWidth`)只是给留白与通栏趋势线留余量,不能代替回退分支。
+
+## DEV-033: 无辅助功能权限时无法用合成鼠标事件验证灵动岛,改用测量探针
+- **Pitfall:** 想脚本化验证灵动岛资源卡:用 `CGWarpMouseCursorPosition` 把光标移进刘海热区、并 `post` 合成 `mouseMoved`,面板始终不弹出(`Notch: show` 日志为 0),容易误判成布局没生效。
+- **Cause:** 光标 warp 不产生事件;合成事件需要辅助功能授权,CLI 进程未授权时 `post` 静默丢弃(listen-only tap 本身仍能装,`tap installed OK` 不代表能注入事件)。
+- **Prevention:** 布局/尺寸类改动不要依赖截图或鼠标模拟:用 `NotchContentView.measureCardSize(module:columnWidth:compact:model:)` 在临时 env 探针里跑组合(全开 / 只开主项 / 主项+GPU / 只开 GPU / 无 GPU),常规与 compact 各量一次,核对卡片宽高与「少一整块」的差值;探针用完立即删除(会改 `notchResourceItems` 的设置,必须临时改再还原)。
+
+## DEV-034: 非激活灵动岛上的双指滑动不能靠子视图 scrollWheel,要用 NSEvent local monitor
+- **Pitfall:** 想在 `NotchShapeContainerView`(或面板视图)重写 `scrollWheel` 做双指左右切换,手指落在卡片(日历日程是 SwiftUI `ScrollView`)上时事件被 SwiftUI 先吃掉,容器收不到,表现为「滑卡片区域没反应、只有滑边缘才行」。
+- **Cause:** scrollWheel 先派发给指针命中的最深视图(SwiftUI hosting 内部的滚动区域),未被显式放行时不保证沿响应链回到自建容器;非激活面板也不成为 key,无法用键盘/焦点事件兜底。
+- **Prevention:** 用 `NSEvent.addLocalMonitorForEvents(matching: .scrollWheel)` 在 `NotchPanel` 里拦事件(`event.window === self` 且面板可见才处理),不消费原事件,纵向滚动/惯性(`momentumPhase != []`)原样放行;锁轴(累积位移 ≥12pt 且横向占优)后累积 ≥50pt 才切一张,并在手势结束前不再触发,避免一次滑动连翻多张。

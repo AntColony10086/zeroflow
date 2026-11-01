@@ -37,8 +37,6 @@ final class SettingsStore: ObservableObject {
         static let notchShowResources = "notchShowResources"
         static let notchShowMusic = "notchShowMusic"
         static let notchResourceItems = "notchResourceItems"
-        static let notchMaxWidth = "notchMaxWidth"
-        static let notchMaxHeight = "notchMaxHeight"
     }
 
     private let defaults: UserDefaults
@@ -115,8 +113,6 @@ final class SettingsStore: ObservableObject {
             Keys.notchShowResources: false,
             Keys.notchShowMusic: false,
             Keys.notchResourceItems: NotchResourceItem.allRawValues,
-            Keys.notchMaxWidth: 680,
-            Keys.notchMaxHeight: 600,
         ])
         _launchAtLogin = Published(initialValue: defaults.bool(forKey: Keys.launchAtLogin))
         _saveDirectory = Published(initialValue: defaults.string(forKey: Keys.saveDirectory) ?? Self.defaultSaveDirectory)
@@ -141,8 +137,6 @@ final class SettingsStore: ObservableObject {
             let stored = defaults.stringArray(forKey: Keys.notchResourceItems) ?? NotchResourceItem.allRawValues
             return NotchResourceItem.allCases.filter { stored.contains($0.rawValue) }.map(\.rawValue)
         }())
-        _notchMaxWidth = Published(initialValue: defaults.integer(forKey: Keys.notchMaxWidth))
-        _notchMaxHeight = Published(initialValue: defaults.integer(forKey: Keys.notchMaxHeight))
         _shortcut = Published(initialValue: Self.loadShortcut(from: defaults))
         _cmdTabShortcut = Published(initialValue: Self.loadCmdTabShortcut(from: defaults))
         _appLanguage = Published(initialValue: AppLanguage(rawValue: defaults.string(forKey: Keys.appLanguage) ?? "") ?? .system)
@@ -465,20 +459,6 @@ final class SettingsStore: ObservableObject {
     @Published var notchResourceItems: [String] {
         didSet {
             defaults.set(notchResourceItems, forKey: Keys.notchResourceItems)
-        }
-    }
-
-    /// 面板最大宽度(pt)。显示 2 个模块时面板取该宽度（两卡片各占一半），单模块按内容收缩
-    @Published var notchMaxWidth: Int {
-        didSet {
-            defaults.set(notchMaxWidth, forKey: Keys.notchMaxWidth)
-        }
-    }
-
-    /// 面板最大高度(pt)。显示 2 个模块时面板取该高度，单模块按内容收缩（上限钳制）
-    @Published var notchMaxHeight: Int {
-        didSet {
-            defaults.set(notchMaxHeight, forKey: Keys.notchMaxHeight)
         }
     }
 

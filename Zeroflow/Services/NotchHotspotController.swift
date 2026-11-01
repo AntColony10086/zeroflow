@@ -3,7 +3,10 @@ import ApplicationServices
 import Combine
 import CoreGraphics
 
-/// 灵动岛：悬停/单击刘海区域，磨砂面板以 iOS 风格弹簧从刘海「生长」展开/缩回（v1 内容 = 日历月视图）。
+/// 灵动岛：悬停/单击刘海区域，弹出「更大的刘海」——顶边贴屏幕顶、水平居中于刘海、
+/// 尺寸随当前内容模块自适应；一次显示一个内容模块（默认日历），卡片左右两侧箭头 /
+/// 面板内双指左右滑动循环切换。
+/// 形状/动画细节见 NotchPanel 类文档。
 ///
 /// 实现要点（结构仿 `DockHoverPreviewController`）：
 /// - listen-only CGEventTap 监听 mouseMoved / mouseDown / keyDown，绝不吞事件：
@@ -12,7 +15,7 @@ import CoreGraphics
 ///   `auxiliaryTopLeftArea` / `auxiliaryTopRightArea` 之间的水平间隙即刘海（竖向占满菜单栏条带）；
 ///   热区 = 刘海矩形左右各外扩 12pt（不纵向外扩，避免盖住菜单栏下方内容区）。
 /// - 状态机：idle →(悬停延时 / 单击热区)→ visible；visible 时指针在 (热区∪面板)外扩内
-///   保活，移出 200ms 宽限收起；区域外任意 mouseDown 收起；Esc 收起；Space 切换 /
+///   保活，移出后按悬停延时（notchHoverDelayMs）延迟收起；区域外任意 mouseDown 收起；Esc 收起；Space 切换 /
 ///   锁屏睡眠 / 屏幕配置变化全局收起。
 /// - 无刘海屏静默不生效（合盖再开屏、屏幕配置变化时重新探测）；
 ///   `ZEROFLOW_NOTCH_FAKE=1` 在主屏合成伪刘海便于调试，`ZEROFLOW_NOTCH_DEBUG=1` 输出决策日志。
@@ -27,8 +30,10 @@ final class NotchHotspotController {
 
     /// 热区对刘海的左右外扩
     private static let hotspotMargin: CGFloat = 12
-    /// visible 后移出 热区∪面板(外扩) 的隐藏宽限（s）：给鼠标移向面板留时间
-    private static let hideGrace: TimeInterval = 0.2
+    /// 悬停延时（s）：弹出等待与移出后的收起等待共用同一设置 notchHoverDelayMs
+    private static var configuredDelay: TimeInterval {
+        TimeInterval(max(50, SettingsStore.shared.notchHoverDelayMs)) / 1000.0
+    }
     /// 保活判定对 热区/面板 的外扩：吞掉两者之间的缝隙，慢速移动不掉出保活区
     private static let keepAliveInset: CGFloat = 6
     /// move 事件处理节流间隔（s）：几何判定足够快，但没必要每个 HID 事件都跑
@@ -44,7 +49,7 @@ final class NotchHotspotController {
     private var phase: Phase = .idle
     /// show 工作代数：悬停调度/单击开启时递增，使旧 show 作废
     private var showGen = 0
-    /// 宽限隐藏代数：回到保活区即取消；与 showGen 分开避免互相误杀
+    /// 延迟隐藏代数：回到保活区即取消；与 showGen 分开避免互相误杀
     private var hideGen = 0
     /// 已调度、尚未触发的悬停 show 代数（防同一停留重复调度；移出热区即作废）
     private var pendingShowGen: Int?
@@ -55,7 +60,7 @@ final class NotchHotspotController {
     private var lastMousePoint = CGPoint.zero
     private var lastMoveProcessedAt = CFTimeInterval(0)
     /// 收起后的重弹抑制：面板被 Esc/点击外部等收起后，若指针仍留在热区内，
-    /// 悬停不会再弹，直到指针离开热区（否则按 Esc 面板立刻 200ms 后重弹）
+    /// 悬停不会再弹，直到指针离开热区（否则按 Esc 面板立刻在一个悬停延时后重弹）
     private var suppressReshow = false
 
     // 主线程专用
@@ -64,6 +69,8 @@ final class NotchHotspotController {
     private var panelShown = false
     private var notchScreen: NSScreen?
     private var dayEventsCancellable: AnyCancellable?
+    /// 会话内记住的显示模块（默认日历，重启回默认；不落盘）
+    private var selectedModule: NotchContentView.Module?
     /// 最近一次 present 的热区/刘海矩形/屏幕（日程变化后 refit 复用；收起动画缩回刘海用 notchTL）
     private var lastPresented: (screen: NSScreen, hotspotTL: CGRect, notchTL: CGRect)?
 
@@ -296,14 +303,14 @@ final class NotchHotspotController {
             }
 
         case .visible:
-            // 显示中：仍在 (热区∪面板)外扩 内 → 保活；移出 → 200ms 宽限隐藏
+            // 显示中：仍在 (热区∪面板)外扩 内 → 保活；移出 → 按悬停延时延迟隐藏
             var inside = false
             if hotspot.insetBy(dx: -Self.keepAliveInset, dy: -Self.keepAliveInset).contains(point) { inside = true }
             if let panelFrame, panelFrame.insetBy(dx: -Self.keepAliveInset, dy: -Self.keepAliveInset).contains(point) { inside = true }
             if inside {
                 bumpHideGen()
             } else {
-                scheduleHideAfterGrace()
+                scheduleHideAfterDelay()
             }
         }
     }
@@ -342,21 +349,21 @@ final class NotchHotspotController {
 
     // MARK: - 调度
 
-    /// 保活：取消待触发的宽限隐藏（不动在途 show）
+    /// 保活：取消待触发的延迟隐藏（不动在途 show）
     private func bumpHideGen() {
         lock.lock()
         hideGen += 1
         lock.unlock()
     }
 
-    /// 宽限隐藏：移出 热区∪面板(外扩) 200ms 后仍 visible 且无在途 show 才真正隐藏。
+    /// 延迟隐藏：移出 热区∪面板(外扩) 一个悬停延时后仍 visible 且无在途 show 才真正隐藏。
     /// 期间回到保活区（bumpHideGen）或调度了新 show 都会取消。
-    private func scheduleHideAfterGrace() {
+    private func scheduleHideAfterDelay() {
         lock.lock()
         hideGen += 1
         let gen = hideGen
         lock.unlock()
-        workQueue.asyncAfter(deadline: .now() + Self.hideGrace) { [weak self] in
+        workQueue.asyncAfter(deadline: .now() + Self.configuredDelay) { [weak self] in
             guard let self else { return }
             self.lock.lock()
             let live = gen == self.hideGen && self.phase == .visible && self.pendingShowGen == nil
@@ -379,7 +386,7 @@ final class NotchHotspotController {
         pendingShowGen = gen
         phase = .pending
         lock.unlock()
-        let delay = TimeInterval(max(50, SettingsStore.shared.notchHoverDelayMs)) / 1000.0
+        let delay = Self.configuredDelay
         workQueue.asyncAfter(deadline: .now() + delay) { [weak self] in
             guard let self else { return }
             self.lock.lock()
@@ -486,29 +493,53 @@ final class NotchHotspotController {
         let viewModel = ensureModel()
         viewModel.reset()
         let panel = ensurePanel()
+        let module = currentSelectedModule()
         panel.present(hotspotTL: detected.hotspotTL, notchTL: detected.notchTL,
-                      screen: detected.screen, model: viewModel)
+                      screen: detected.screen, model: viewModel, module: module,
+                      onNavigateModule: { [weak self] in self?.handleStepModule($0) })
         panelShown = true
         lastPresented = (detected.screen, detected.hotspotTL, detected.notchTL)
-        startMonitors()
+        updateMonitors()
         startDayEventsRefit(model: viewModel)
-        lock.lock()
         // 用弹簧目标 frame，而非 present() 返回时刻的瞬时 frame（动画刚从刘海开始）
-        panelFrameTL = toTopLeftCoords(panel.targetFrame)
-        lock.unlock()
+        syncPanelFrame()
         if Self.debug {
             ZSLog("Notch: show gen=\(gen) hotspot=\(detected.hotspotTL) panel=\(panel.frame)")
         }
     }
 
-    /// 按当前启用模块启动数据轮询（仅面板可见期间运行，hidePanel 时全部停止）
-    private func startMonitors() {
-        if SettingsStore.shared.notchShowResources {
-            SystemResourceMonitor.shared.setActive(true)
-        }
-        if SettingsStore.shared.notchShowMusic {
-            NowPlayingMonitor.shared.setActive(true)
-        }
+    /// 会话内选择的显示模块；被禁用/失效时回退默认（日历优先，无启用模块 = nil → 空状态）
+    private func currentSelectedModule() -> NotchContentView.Module? {
+        let enabled = NotchContentView.enabledModules
+        if let selected = selectedModule, enabled.contains(selected) { return selected }
+        selectedModule = NotchContentView.defaultModule
+        return selectedModule
+    }
+
+    /// 顶部箭头 / 双指左右滑动：按启用模块顺序循环切到上一张（-1）或下一张（+1）
+    private func handleStepModule(_ step: Int) {
+        let modules = NotchContentView.enabledModules
+        guard modules.count > 1, step != 0 else { return }
+        let index = currentSelectedModule().flatMap { modules.firstIndex(of: $0) } ?? 0
+        let count = modules.count
+        let next = ((index + step) % count + count) % count
+        handleSelectModule(modules[next])
+    }
+
+    /// 切换模块（箭头 / 滑动）：更新会话状态、重建面板内容并同步数据轮询/日程订阅
+    private func handleSelectModule(_ module: NotchContentView.Module) {
+        guard module != selectedModule else { return }
+        selectedModule = module
+        panel?.switchModule(to: module)
+        syncPanelFrame()
+        updateMonitors()
+        if let model { startDayEventsRefit(model: model) }
+    }
+
+    /// 按当前显示模块启停数据轮询（仅面板可见期间运行，hidePanel 时全部停止）
+    private func updateMonitors() {
+        SystemResourceMonitor.shared.setActive(selectedModule == .resources)
+        NowPlayingMonitor.shared.setActive(selectedModule == .music)
     }
 
     private func ensurePanel() -> NotchPanel {
@@ -525,23 +556,29 @@ final class NotchHotspotController {
         return model
     }
 
-    /// 日历模块可见时订阅日程变化：日程异步加载完成 / 切换选中日期后重测面板高度
-    /// （面板尺寸在日程加载前测量，首次弹出与切换日期都靠这里补齐真实高度）
+    /// 日历模块显示中时订阅日程变化：日程异步加载完成 / 切换选中日期后重测内容布局
+    /// （面板尺寸随日程列表变化，refit 会弹簧变形并同步命中区域）
     private func startDayEventsRefit(model: NotchCalendarViewModel) {
         dayEventsCancellable = nil
-        guard NotchContentView.orderedVisibleModules.contains(.calendar) else { return }
+        guard selectedModule == .calendar else { return }
         dayEventsCancellable = model.$dayEvents
             .removeDuplicates()
             .sink { [weak self] _ in self?.refitPanel() }
     }
 
-    /// 重测面板：顶边贴刘海不动，只调高度；同步保活判定用的 panelFrameTL
+    /// 重测内容：尺寸随内容变化，重建 contentView 并同步命中区域
     private func refitPanel() {
         lock.lock()
         let visible = phase == .visible
         lock.unlock()
-        guard visible, let panel, let model, let presented = lastPresented else { return }
-        panel.refit(hotspotTL: presented.hotspotTL, screen: presented.screen, model: model)
+        guard visible, let panel, let model, lastPresented != nil else { return }
+        panel.refit(model: model)
+        syncPanelFrame()
+    }
+
+    /// 面板尺寸变化后用弹簧目标 frame 更新保活/点击外部命中区域
+    private func syncPanelFrame() {
+        guard let panel else { return }
         lock.lock()
         panelFrameTL = toTopLeftCoords(panel.targetFrame)
         lock.unlock()

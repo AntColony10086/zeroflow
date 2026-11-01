@@ -224,52 +224,87 @@ final class NotchCalendarViewModel: ObservableObject {
     }
 }
 
-/// 灵动岛面板内容：已启用的内容模块横排（日历 / 系统资源 / 正在播放，最多同时 2 个），
-/// 无模块时显示「添加显示内容」引导。双卡片时两卡片各占一半宽，面板高由内容驱动
-/// （上限 = 设置最大高）；系统资源卡拉伸到驱动卡高度、行均匀分布；日历日程列表
-/// 装得下完整展开、装不下在剩余空间滚动（文字不缩放），仅固定部分也超限时才整体缩小；
-/// 各模块包圆角半透明卡片背景。
+/// 灵动岛面板内容：顶部条（左上角两个切换箭头）+ 单个内容模块卡片
+/// （日历 / 系统资源 / 正在播放，一次只显示一个）；无启用模块时显示「添加显示内容」引导。
+/// 面板尺寸随内容自适应：卡片 = 模块自然尺寸（宽度取自然列宽，高度取内容自然高，
+/// 超出屏幕上限时日程列表滚动/紧凑密度/等比缩小兜底）；内容按卡片内宽重排（宽度不做缩放）；
+/// 卡片包圆角半透明背景。
 struct NotchContentView: View {
     @ObservedObject var model: NotchCalendarViewModel
     /// 显示宽度：nil = 测量模式（卡片自然尺寸）；正式展示由 NotchPanel 传入面板尺寸
     var displayWidth: CGFloat? = nil
     /// 显示高度：正式展示时传入面板高
     var displayHeight: CGFloat? = nil
-    /// 测量单模块尺寸时指定要渲染的模块；nil = 按设置显示
-    var modulesOverride: [Module]? = nil
-    /// 测量双卡片拉伸高度时指定列宽；nil = 按自然宽/拉伸规则
+    /// 刘海高度：顶部占位条高度（内容保持在刘海以下；面板水平居中于刘海）
+    var notchHeight: CGFloat = 0
+    /// 正式渲染时显示的模块；nil = 空状态（无启用模块）
+    var displayModule: Module? = nil
+    /// 点击左右箭头切换模块回调（-1 = 上一张，+1 = 下一张）
+    var onNavigateModule: ((Int) -> Void)? = nil
+    /// 遮罩侧墙相对窗口边缘的内缩量（由 NotchPanel 按面板宽算），箭头按钮据此避开肩弧遮罩
+    var sideWallInset: CGFloat = 0
+    /// 测量单模块尺寸时指定要渲染的模块
+    var modulesOverride: Module? = nil
+    /// 测量时指定列宽；nil = 按自然宽/拉伸规则
     var columnWidthOverride: CGFloat? = nil
-    /// 测量系统资源卡拉伸高度时指定列高；nil = 按自然高
-    var columnHeightOverride: CGFloat? = nil
     /// 测量日历卡日程列表的最大高度；nil = 不限制（渲染时靠面板高度约束滚动）
     var dayListMaxHeight: CGFloat? = nil
     /// 测量日历卡固定部分高度时收起日程列表（只留选中日标题）
     var collapseDayEvents = false
-    /// 各卡片的自然尺寸（含卡片内边距，由 NotchPanel 测量传入，顺序对齐可见模块）
-    var cardNaturals: [CGSize] = []
-    /// 卡片内容等比缩放系数（≤1，由 NotchPanel 按槽位与自然尺寸计算）
+    /// 卡片尺寸（含卡片内边距；由 NotchPanel 按内容自然尺寸决定），渲染时居中于槽位
+    var cardSize: CGSize = CGSize(width: 100, height: 100)
+    /// 卡片内容的布局高度（含卡片内边距）：= 内容自然高（封顶到卡片上限），
+    /// 大于卡片高时说明连固定部分都装不下，靠 cardScale 缩小兜底
+    var cardContentHeight: CGFloat = 100
+    /// 卡片内容等比缩放系数（≤1，由 NotchPanel 按卡片高与内容高计算）
     var cardScale: CGFloat = 1
+    /// 紧凑密度：卡片高装不下常规密度时整体切换（资源行单行化、字号/间距/网格收紧），
+    /// 目标是自然高≈卡片内高、scale≈1；仍装不下再等比缩小兜底
+    var compactMode: Bool = false
 
     @ObservedObject private var resources = SystemResourceMonitor.shared
     @ObservedObject private var music = NowPlayingMonitor.shared
 
     private let accent = Color.accentColor
     private static let columns = Array(repeating: GridItem(.flexible(), spacing: 0), count: 7)
-    /// 面板内容内边距（测量与尺寸决策共用）
-    static let outerHPadding: CGFloat = 20
-    static let outerVPadding: CGFloat = 12
-    /// 卡片样式：间距 / 内边距 / 圆角（测量与尺寸决策共用）
-    static let cardGap: CGFloat = 14
-    static let cardPadding: CGFloat = 14
+    /// 面板内容内边距（测量与尺寸决策共用）；水平方向 = 卡片到面板「可见」边缘的留白
+    /// （遮罩左右侧墙还会内缩，NotchPanel 算面板宽时会额外补上）
+    static let outerHPadding: CGFloat = 16
+    static let outerVPadding: CGFloat = 16
+    /// 顶部条与内容卡槽的间距（渲染与尺寸决策共用）
+    static let switcherGap: CGFloat = 8
+    /// 切换箭头按钮：按钮边长 / 两按钮间距 / 两个按钮合计宽度（面板最小宽度据此取，见 NotchPanel）
+    private static let arrowButtonSize: CGFloat = 24
+    private static let arrowGap: CGFloat = 6
+    static let arrowBlockWidth: CGFloat = arrowButtonSize * 2 + arrowGap
+    /// 卡片水平内边距（测量与尺寸决策共用：卡片宽 = 内容列宽 + 2×该值）
+    static let cardPadding: CGFloat = 10
+    /// 卡片竖直内边距：比水平略紧，日历/资源/音乐共用
+    static let cardVPadding: CGFloat = 6
     private static let cardRadius: CGFloat = 14
-    /// 日历列自然宽度（单卡片测量/展示基准）
-    private static let calendarColumnWidth: CGFloat = 332
-    /// 系统资源列自然宽度
-    private static let resourcesColumnWidth: CGFloat = 224
+    /// 日历列自然宽度：卡片约 320 宽；固定部分高约 229–252（间距已收紧），卡片宽于高
+    private static let calendarColumnWidth: CGFloat = 300
+    /// 系统资源列自然宽度：两列主要项环（CPU/内存）之间的空白要放得下浮动的 GPU 小环，
+    /// 读数行与通栏趋势线也需要横向空间（与日历卡片同宽 320，观感统一）
+    private static let resourcesColumnWidth: CGFloat = 300
     /// 正在播放列自然宽度
     private static let musicColumnWidth: CGFloat = 224
 
-    /// 内容模块（固定顺序，最多同时显示 2 个；超出部分在设置页禁用开关）
+    /// 模块自然列宽（卡片宽 = 列宽 + 左右内边距，即卡片宽度不会超过此自然尺寸）
+    static func naturalColumnWidth(for module: Module) -> CGFloat {
+        switch module {
+        case .calendar: return calendarColumnWidth
+        case .resources: return resourcesColumnWidth
+        case .music: return musicColumnWidth
+        }
+    }
+
+    /// 卡片内宽（卡片宽 − 左右内边距）：渲染列宽与内容测量共用同一口径
+    static func columnWidth(forCardWidth cardWidth: CGFloat) -> CGFloat {
+        max(1, cardWidth - cardPadding * 2)
+    }
+
+    /// 内容模块（固定顺序；一次只显示一个，可全部启用，靠顶部箭头 / 双指左右滑动切换）
     enum Module: CaseIterable {
         case calendar
         case resources
@@ -277,65 +312,85 @@ struct NotchContentView: View {
     }
 
     var body: some View {
-        HStack(alignment: .top, spacing: Self.cardGap) {
-            ForEach(Array(visibleModules.enumerated()), id: \.element) { index, module in
-                moduleCard(module, index: index)
-            }
+        if displayWidth == nil {
+            measureBody
+        } else {
+            renderBody
         }
-        .padding(.horizontal, Self.outerHPadding)
-        .padding(.vertical, Self.outerVPadding)
-        .frame(width: displayWidth, height: displayHeight, alignment: .center)
     }
 
-    /// 面板显示的模块（固定顺序，最多 2 个）
-    static var orderedVisibleModules: [Module] {
+    /// 启用的模块（固定顺序，无数量上限）
+    static var enabledModules: [Module] {
         var enabled: [Module] = []
         if SettingsStore.shared.notchShowCalendar { enabled.append(.calendar) }
         if SettingsStore.shared.notchShowResources { enabled.append(.resources) }
         if SettingsStore.shared.notchShowMusic { enabled.append(.music) }
-        return Array(enabled.prefix(2))
+        return enabled
     }
 
-    /// 面板显示的模块数（面板尺寸决策用）
-    static var visibleModuleCount: Int { orderedVisibleModules.count }
+    /// 会话默认模块：日历优先，否则第一个启用模块（无启用模块 = nil → 空状态）
+    static var defaultModule: Module? {
+        enabledModules.contains(.calendar) ? .calendar : enabledModules.first
+    }
 
-    /// 测量单个模块卡片的尺寸（含卡片内边距，不含面板内边距）。
-    /// columnWidth 非 nil 时以该列宽测量（双卡片按拉伸宽测高）；
-    /// columnHeight 非 nil 时以该列高测量（资源卡拉伸到驱动卡高度）；
-    /// dayListMaxHeight / collapseDayEvents 用于日历卡的全高/固定高两档测量。
-    static func measureCardSize(index: Int,
+    /// 测量单个模块卡片的尺寸（含卡片内边距，不含面板内边距与顶部条）。
+    /// columnWidth 非 nil 时以该列宽测量；columnHeight 非 nil 时以该列高测量
+    /// （资源卡按指定列高拉伸）；dayListMaxHeight / collapseDayEvents 用于日历卡的全高/固定高两档。
+    static func measureCardSize(module: Module,
                                 columnWidth: CGFloat?,
-                                columnHeight: CGFloat? = nil,
                                 dayListMaxHeight: CGFloat? = nil,
                                 collapseDayEvents: Bool = false,
+                                compact: Bool = false,
                                 model: NotchCalendarViewModel) -> CGSize {
-        let modules = orderedVisibleModules
-        guard index < modules.count else { return .zero }
         let view = NotchContentView(model: model,
-                                    modulesOverride: [modules[index]],
+                                    modulesOverride: module,
                                     columnWidthOverride: columnWidth,
-                                    columnHeightOverride: columnHeight,
                                     dayListMaxHeight: dayListMaxHeight,
-                                    collapseDayEvents: collapseDayEvents)
+                                    collapseDayEvents: collapseDayEvents,
+                                    compactMode: compact)
         let host = NSHostingView(rootView: view)
         host.layoutSubtreeIfNeeded()
-        return CGSize(width: max(1, host.fittingSize.width - outerHPadding * 2),
-                      height: max(1, host.fittingSize.height - outerVPadding * 2))
+        return host.fittingSize
     }
 
-    private var visibleModules: [Module] { modulesOverride ?? Self.orderedVisibleModules }
+    /// 测量模式：单个模块卡的自然尺寸（不含面板内边距与顶部条）
+    @ViewBuilder private var measureBody: some View {
+        let module = modulesOverride ?? .calendar
+        moduleView(module)
+            .padding(.horizontal, Self.cardPadding)
+            .padding(.vertical, Self.cardVPadding)
+            .background(cardBackground)
+    }
 
-    /// 双卡片布局：两卡片各占一半宽
-    private var isDualLayout: Bool { visibleModules.count == 2 }
+    /// 正式渲染：顶部条（刘海高度，左上角放切换箭头）+ 内容卡槽（刘海以下区域），
+    /// 卡片左右留白与底部一致
+    private var renderBody: some View {
+        VStack(spacing: Self.switcherGap) {
+            topBar
+            contentSlot.frame(maxWidth: .infinity)
+        }
+        .padding(.bottom, Self.outerVPadding)
+        .frame(width: displayWidth, height: displayHeight, alignment: .top)
+    }
 
-    /// 正式渲染且双卡片时，列从固定自然宽改为填满卡片槽
-    private var stretchForRender: Bool { displayWidth != nil && isDualLayout && columnWidthOverride == nil }
+    @ViewBuilder private var contentSlot: some View {
+        if let module = displayModule {
+            renderedCard(module)
+        } else {
+            // 空状态：卡片固定尺寸（内容只有一行提示+按钮，缩成小条不好点）
+            emptyState
+                .padding(.vertical, Self.cardVPadding)
+                .frame(width: max(1, cardSize.width), height: max(1, cardSize.height))
+                .background(cardBackground)
+                .frame(height: cardSlotHeight)
+        }
+    }
 
-    /// 测量模式（卡片自适应内容自然尺寸）
-    private var isMeasuring: Bool { displayWidth == nil }
-
-    private func renderColumnWidth(_ natural: CGFloat) -> CGFloat? {
-        columnWidthOverride ?? (stretchForRender ? nil : natural)
+    /// 正式渲染时的列宽：卡片内宽（宽度方向不额外缩放，内容按此重排）
+    private func effectiveColumnWidth(_ natural: CGFloat) -> CGFloat {
+        if let override = columnWidthOverride { return max(1, override) }
+        guard displayWidth != nil else { return natural }
+        return Self.columnWidth(forCardWidth: cardSize.width)
     }
 
     @ViewBuilder private func moduleView(_ module: Module) -> some View {
@@ -346,39 +401,55 @@ struct NotchContentView: View {
         }
     }
 
-    @ViewBuilder private func moduleCard(_ module: Module, index: Int) -> some View {
-        if isMeasuring {
-            moduleView(module)
-                .padding(Self.cardPadding)
-                .background(cardBackground)
-        } else {
-            renderedCard(module, index: index)
-        }
+    /// 内容卡槽高度：面板高 − 刘海高 − 顶部条间距 − 底部内边距（与 computeLayout 同口径）
+    private var cardSlotHeight: CGFloat {
+        max(1, (displayHeight ?? 0) - notchHeight - Self.switcherGap - Self.outerVPadding)
     }
 
-    /// 正式渲染：卡片背景填满槽位，内容按 cardScale 等比缩放后贴顶
-    /// （缩放锚点 = 顶部，留白只出现在底部），高度取卡片的渲染目标高
-    /// （完整高或压缩到槽高的滚动高，由 NotchPanel.computeLayout 决定）
-    private func renderedCard(_ module: Module, index: Int) -> some View {
-        let natural = index < cardNaturals.count ? cardNaturals[index] : CGSize(width: 100, height: 100)
-        let slot = cardSlotSize
-        return moduleView(module)
-            .padding(Self.cardPadding)
-            .frame(width: isDualLayout ? slot.width : natural.width,
-                   height: natural.height, alignment: .top)
-            .scaleEffect(cardScale, anchor: .top)
-            .frame(width: slot.width, height: slot.height, alignment: .top)
+    /// 正式渲染：卡片宽度由内容决定，在槽位内水平+垂直居中；
+    /// 内容列按卡片内宽布局、高度取 cardContentHeight，超出卡片时靠 cardScale 缩小兜底
+    /// （scale 缩的是视觉尺寸，布局高度仍钉在内容高）
+    private func renderedCard(_ module: Module) -> some View {
+        moduleView(module)
+            .padding(.horizontal, Self.cardPadding)
+            .padding(.vertical, Self.cardVPadding)
+            .frame(height: max(1, cardContentHeight), alignment: .center)
+            .scaleEffect(cardScale, anchor: .center)
+            .frame(width: max(1, cardSize.width), height: max(1, cardSize.height), alignment: .center)
             .background(cardBackground)
+            .frame(height: cardSlotHeight)
     }
 
-    /// 卡片槽位：双卡片各占一半宽，单卡片占满面板内容区
-    private var cardSlotSize: CGSize {
-        let innerW = (displayWidth ?? 0) - Self.outerHPadding * 2
-        let innerH = max(1, (displayHeight ?? 0) - Self.outerVPadding * 2)
-        if isDualLayout {
-            return CGSize(width: max(1, (innerW - Self.cardGap) / 2), height: innerH)
+    /// 顶部条：刘海高度的黑条（面板水平居中于刘海，中间被硬件刘海挡住），
+    /// 左上角挨着卡片左边缘放「上一张 / 下一张」箭头，不占卡片左右的留白；
+    /// 面板最小宽度由 NotchPanel 保证这两个箭头落在刘海左侧可见处
+    private var topBar: some View {
+        HStack(spacing: Self.arrowGap) {
+            navigationArrow(step: -1)
+            navigationArrow(step: 1)
+            Spacer(minLength: 0)
         }
-        return CGSize(width: max(1, innerW), height: innerH)
+        .padding(.horizontal, sideWallInset + Self.outerHPadding)
+        .frame(height: notchHeight, alignment: .center)
+    }
+
+    /// 切换箭头按钮（上一张 / 下一张）：顶部条内的小圆钮；
+    /// 启用模块不足 2 个时置灰且不可点
+    private func navigationArrow(step: Int) -> some View {
+        let enabled = Self.enabledModules.count > 1 && onNavigateModule != nil
+        return Button {
+            onNavigateModule?(step)
+        } label: {
+            Image(systemName: step < 0 ? "chevron.left" : "chevron.right")
+                .font(.system(size: 11, weight: .semibold))
+                .foregroundColor(.primary.opacity(enabled ? 0.85 : 0.25))
+                .frame(width: Self.arrowButtonSize, height: Self.arrowButtonSize)
+                .background(Circle().fill(Color.primary.opacity(enabled ? 0.10 : 0.04)))
+                .contentShape(Circle())
+        }
+        .buttonStyle(.plain)
+        .disabled(!enabled)
+        .accessibilityLabel(L10n.tr(step < 0 ? "上一个" : "下一个"))
     }
 
     private var cardBackground: some View {
@@ -391,15 +462,17 @@ struct NotchContentView: View {
     }
 
     private var calendarColumn: some View {
-        VStack(spacing: 10) {
+        VStack(spacing: compactMode ? 4 : 5) {
             header
             weekdayRow
             monthGrid
-            Divider()
-            daySection
+            // 紧凑密度：只留月历网格（卡片高受限时日程区装不下，标题+列表整体隐藏）
+            if !compactMode {
+                Divider()
+                daySection
+            }
         }
-        .frame(width: renderColumnWidth(Self.calendarColumnWidth))
-        .frame(maxWidth: stretchForRender ? .infinity : nil)
+        .frame(width: effectiveColumnWidth(Self.calendarColumnWidth))
     }
 
     private var emptyState: some View {
@@ -418,56 +491,195 @@ struct NotchContentView: View {
 
     // MARK: - 系统资源模块
 
-    /// 资源行拉伸条件：测量时指定列高，或正式渲染双卡片（卡片槽高由面板决定）
-    private var stretchResourceRows: Bool { columnHeightOverride != nil || stretchForRender }
+    /// 资源卡分块尺寸：上半块（主要项 CPU/内存 环形仪表，GPU 小环浮在两环之间的空白正中）
+    /// 与下半块（磁盘/网络 上下两行：标题 + 读数一行，趋势线通栏拉满）；上下两块之间一条细分隔线。
+    private static let resourceHalfHeight: CGFloat = 88
+    private static let resourceCellGap: CGFloat = 8
+    /// 顶部条与上半块、上半块与下半块之间的间距（细分隔线上下的留白同值）
+    private static let resourceHalfDividerGap: CGFloat = 7
+    private static let primaryRingSize: CGFloat = 56
+    private static let primaryRingLineWidth: CGFloat = 5.5
+    /// GPU 次要项：小环明显小于主项环（主次分明），浮在两主项之间的空白里，不占格子
+    private static let gpuRingSize: CGFloat = 34
+    private static let gpuRingLineWidth: CGFloat = 3
+    private static let resourceRateRowGap: CGFloat = 8
+    /// 趋势线通栏（标题与读数独占一行），比左右分栏时长一倍以上
+    private static let resourceSparklineHeight: CGFloat = 24
 
-    private var resourcesColumn: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            moduleHeader("cpu", L10n.tr("系统资源"))
-            ForEach(enabledResourceItems, id: \.self) { item in
-                resourceRow(item)
-                    // 拉伸时各行平分剩余高度（标题固定顶部），行内内容垂直居中
-                    .frame(maxHeight: stretchResourceRows ? .infinity : nil)
-            }
-        }
-        .frame(width: renderColumnWidth(Self.resourcesColumnWidth))
-        .frame(height: columnHeightOverride)
-        .frame(maxWidth: stretchForRender ? .infinity : nil, alignment: .leading)
+    /// 主要项（环形仪表，占上半块）：固定顺序 CPU → 内存
+    private var primaryResourceItems: [NotchResourceItem] {
+        enabledResourceItems.filter { $0 == .cpu || $0 == .memory }
     }
 
-    private func resourceRow(_ item: NotchResourceItem) -> some View {
-        HStack(spacing: 8) {
-            Text(item.title)
-                .font(.system(size: 12))
-                .foregroundColor(.secondary)
-            // 百分比项（CPU/内存/GPU）= 用量进度条：灰轨道=总量 100%，彩色填充=当前用量；
-            // 速率项（磁盘/网络）无固定满格，保留迷你趋势图
-            if isPercentItem(item) {
-                ResourceProgressBar(progress: normalizedProgress(item))
-                    .frame(maxWidth: .infinity)
-                    .frame(height: 16)
+    /// 速率项（占下半块）：固定顺序 磁盘 → 网络（上下两行，趋势线可拉长）
+    private var rateResourceItems: [NotchResourceItem] {
+        enabledResourceItems.filter { $0 == .disk || $0 == .network }
+    }
+
+    /// 系统资源卡：上半块 = CPU/内存 环形仪表各占一格（共半块），GPU 小环浮在两环之间的空白正中；
+    /// 下半块 = 磁盘/网络 上下两行（标题+读数一行 + 通栏趋势线）。
+    /// 紧凑密度（屏幕极矮兜底）= 每项单行。
+    private var resourcesColumn: some View {
+        let inner = effectiveColumnWidth(Self.resourcesColumnWidth)
+        let primary = primaryResourceItems
+        let rates = rateResourceItems
+        let showGPU = enabledResourceItems.contains(.gpu)
+        let hasUpper = !primary.isEmpty || (showGPU && !compactMode)
+        return VStack(alignment: .leading, spacing: 0) {
+            moduleHeader("cpu", L10n.tr("系统资源"))
+                .padding(.bottom, compactMode ? 4 : Self.resourceHalfDividerGap)
+            if compactMode {
+                VStack(alignment: .leading, spacing: 4) {
+                    ForEach(enabledResourceItems, id: \.self) { item in
+                        compactResourceRow(item, width: inner)
+                    }
+                }
             } else {
-                ResourceSparkline(normalizedValues: normalizedHistory(item))
-                    .frame(maxWidth: .infinity)
-                    .frame(height: 16)
+                if hasUpper {
+                    resourceUpperHalf(primary: primary, showGPU: showGPU, inner: inner)
+                }
+                if hasUpper && !rates.isEmpty {
+                    Rectangle()
+                        .fill(Color.primary.opacity(0.06))
+                        .frame(height: 0.5)
+                        .padding(.vertical, Self.resourceHalfDividerGap)
+                }
+                if !rates.isEmpty {
+                    VStack(alignment: .leading, spacing: Self.resourceRateRowGap) {
+                        ForEach(rates, id: \.self) { rateResourceRow($0, width: inner) }
+                    }
+                    .frame(width: inner)
+                }
             }
-            Text(resourceValue(item))
-                .font(.system(size: 12, weight: .medium))
+        }
+        .frame(width: inner)
+    }
+
+    /// 上半块：CPU/内存 环各占一格；GPU 小环浮在两格之间的空白正中（不占格、不挤主项）。
+    /// 只启用一个主项（或没有主项）时中间没有留白，GPU 退回成紧邻的第二个格子。
+    private func resourceUpperHalf(primary: [NotchResourceItem], showGPU: Bool, inner: CGFloat) -> some View {
+        let width = resourceCellWidth(count: max(1, primary.count), inner: inner)
+        // 两格之间才有空白可浮（ZStack 居中），否则与主项并排
+        let floats = showGPU && primary.count >= 2
+        let inline = showGPU && !floats
+        return ZStack {
+            HStack(spacing: Self.resourceCellGap) {
+                ForEach(primary, id: \.self) { item in
+                    primaryResourceCell(item, width: width)
+                }
+                if inline { gpuBadge }
+            }
+            .frame(width: inner)
+            if floats { gpuBadge }
+        }
+        .frame(width: inner)
+    }
+
+    /// GPU 次要项：小环（环心百分比）+ 名称，浮在上半块两环之间的空白正中
+    private var gpuBadge: some View {
+        VStack(spacing: 2) {
+            ResourceRing(progress: normalizedProgress(.gpu),
+                         text: percentText(.gpu),
+                         size: Self.gpuRingSize,
+                         lineWidth: Self.gpuRingLineWidth,
+                         fontSize: 10,
+                         tint: ringTint(.gpu))
+            Text(NotchResourceItem.gpu.title)
+                .font(.system(size: 9.5))
+                .foregroundColor(.secondary)
+                .lineLimit(1)
+        }
+    }
+
+    /// 半块内的单元格均分：n 格按内宽等分，单个格子不铺满整行（与多格观感一致）
+    private func resourceCellWidth(count: Int, inner: CGFloat) -> CGFloat {
+        let n = max(1, count)
+        guard n > 1 else { return min(inner, Self.primaryRingSize * 2.4) }
+        return (inner - Self.resourceCellGap * CGFloat(n - 1)) / CGFloat(n)
+    }
+
+    /// 主要项单元格：环形仪表（环心 = 百分比）+ 名称 + 副信息（CPU 核心数 / 内存 已用-总量）
+    private func primaryResourceCell(_ item: NotchResourceItem, width: CGFloat) -> some View {
+        VStack(spacing: 3) {
+            ResourceRing(progress: normalizedProgress(item),
+                         text: percentText(item),
+                         size: Self.primaryRingSize,
+                         lineWidth: Self.primaryRingLineWidth,
+                         fontSize: 15,
+                         tint: ringTint(item))
+            Text(item.title)
+                .font(.system(size: 11))
+                .foregroundColor(.secondary)
+                .lineLimit(1)
+            Text(primaryDetail(item))
+                .font(.system(size: 10, weight: .medium))
+                .monospacedDigit()
+                .foregroundColor(.secondary)
+                .lineLimit(1)
+                .minimumScaleFactor(0.75)
+        }
+        // minHeight 而非固定高：内容永远不被迫溢出，两块等高至少各占半块
+        .frame(width: width)
+        .frame(minHeight: Self.resourceHalfHeight)
+    }
+
+    /// 速率项一行：标题 + 两向读数占一行，趋势线整条通栏（线长拉满内宽）
+    private func rateResourceRow(_ item: NotchResourceItem, width: CGFloat) -> some View {
+        let lines = rateLines(item)
+        return VStack(alignment: .leading, spacing: 3) {
+            HStack(spacing: 6) {
+                Text(item.title)
+                    .font(.system(size: 10))
+                    .foregroundColor(.secondary)
+                    .fixedSize()
+                Spacer(minLength: 4)
+                HStack(spacing: 8) {
+                    Text(lines.read)
+                    Text(lines.write)
+                }
+                .font(.system(size: 9.5, weight: .medium))
+                .monospacedDigit()
+                .foregroundColor(.primary.opacity(0.9))
+                .lineLimit(1)
+                .minimumScaleFactor(0.8)
+            }
+            ResourceSparkline(normalizedValues: normalizedHistory(item))
+                .frame(height: Self.resourceSparklineHeight)
+        }
+        .frame(width: width)
+    }
+
+    /// 紧凑密度兜底（屏幕极矮）：每项单行「图标 名称 … 数值」，无环、无趋势线
+    private func compactResourceRow(_ item: NotchResourceItem, width: CGFloat) -> some View {
+        HStack(spacing: 5) {
+            Image(systemName: item.symbol)
+                .font(.system(size: 9))
+                .foregroundColor(.secondary)
+            Text(item.title)
+                .font(.system(size: 10))
+                .foregroundColor(.secondary)
+                .lineLimit(1)
+            Spacer(minLength: 4)
+            Text(compactValue(item))
+                .font(.system(size: 10, weight: .medium))
                 .monospacedDigit()
                 .lineLimit(1)
                 .minimumScaleFactor(0.8)
         }
+        .frame(width: width)
     }
 
-    /// 百分比项（CPU/内存/GPU）用进度条展示用量占比；磁盘/网络为速率无固定满格，走趋势图
-    private func isPercentItem(_ item: NotchResourceItem) -> Bool {
+    /// 环形仪表色相：CPU 蓝 / 内存绿 / GPU 紫，三项一眼可分（HUD 固定深色，用系统色相即可）
+    private func ringTint(_ item: NotchResourceItem) -> Color {
         switch item {
-        case .cpu, .memory, .gpu: return true
-        case .disk, .network: return false
+        case .cpu: return .blue
+        case .memory: return .green
+        case .gpu: return .purple
+        case .disk, .network: return .accentColor
         }
     }
 
-    /// 百分比项当前用量 0–1；nil = 暂不可用（只显示空轨道，数值列同步显示「—」）
+    /// 百分比项当前用量 0–1；nil = 暂不可用（只显示空轨道，环心同步显示「—」）
     private func normalizedProgress(_ item: NotchResourceItem) -> Double? {
         let s = resources.sample
         switch item {
@@ -480,44 +692,71 @@ struct NotchContentView: View {
         }
     }
 
-    /// 迷你趋势图数据（现仅速率项 磁盘/网络 消费）：速率项按窗口内峰值归一化（峰值下限 200KB/s 防除零全矮）
+    /// 迷你趋势图数据（仅速率项 磁盘/网络）：按窗口内峰值归一化（峰值下限 200KB/s 防除零全矮）
     private func normalizedHistory(_ item: NotchResourceItem) -> [Double] {
-        func normalize(_ values: [Double], scale: Double) -> [Double] {
-            values.map { min(1, max(0, $0 / scale)) }
-        }
         let h = resources.history
+        let raw: [Double]
         switch item {
-        case .cpu: return normalize(h.cpu, scale: 100)
-        case .memory: return normalize(h.memory, scale: 100)
-        case .gpu: return normalize(h.gpu, scale: 100)
-        case .disk:
-            return normalize(h.disk, scale: max(h.disk.max() ?? 0, 200_000))
-        case .network:
-            return normalize(h.network, scale: max(h.network.max() ?? 0, 200_000))
+        case .disk: raw = h.disk
+        case .network: raw = h.network
+        default: return []
         }
+        let scale = max(raw.max() ?? 0, 200_000)
+        return raw.map { min(1, max(0, $0 / scale)) }
     }
 
     private var enabledResourceItems: [NotchResourceItem] {
         SettingsStore.shared.notchResourceItems.compactMap { NotchResourceItem(rawValue: $0) }
     }
 
-    private func resourceValue(_ item: NotchResourceItem) -> String {
+    /// 环形仪表环心文字：百分比项为用量百分比，速率项不进环
+    private func percentText(_ item: NotchResourceItem) -> String {
+        guard let progress = normalizedProgress(item) else { return "—" }
+        return String(format: "%.0f%%", min(1, max(0, progress)) * 100)
+    }
+
+    /// 主要项副信息：CPU = 核心数；内存 = 已用 / 总量
+    private func primaryDetail(_ item: NotchResourceItem) -> String {
         let s = resources.sample
         switch item {
         case .cpu:
-            return s.cpuPercent.map { String(format: "%.0f%%", $0) } ?? "—"
+            return "\(ProcessInfo.processInfo.processorCount) \(L10n.tr("核"))"
         case .memory:
             guard let used = s.memUsedBytes else { return "—" }
             guard let total = s.memTotalBytes else { return SystemResourceMonitor.formatBytes(used) }
             return "\(SystemResourceMonitor.formatBytes(used)) / \(SystemResourceMonitor.formatBytes(total))"
+        case .gpu, .disk, .network:
+            return ""
+        }
+    }
+
+    /// 速率项两行数值：磁盘 = 读/写，网络 = 下行/上行；任一方向有值即显示，双向都缺失显示「—」
+    private func rateLines(_ item: NotchResourceItem) -> (read: String, write: String) {
+        let s = resources.sample
+        switch item {
         case .disk:
-            let text = "\(L10n.tr("读")) \(SystemResourceMonitor.formatBps(s.diskReadBps)) · \(L10n.tr("写")) \(SystemResourceMonitor.formatBps(s.diskWriteBps))"
-            return (s.diskReadBps == nil && s.diskWriteBps == nil) ? "—" : text
+            guard s.diskReadBps != nil || s.diskWriteBps != nil else {
+                return ("\(L10n.tr("读")) —", "\(L10n.tr("写")) —")
+            }
+            return ("\(L10n.tr("读")) \(SystemResourceMonitor.formatBps(s.diskReadBps))",
+                    "\(L10n.tr("写")) \(SystemResourceMonitor.formatBps(s.diskWriteBps))")
         case .network:
-            let text = "↓ \(SystemResourceMonitor.formatBps(s.netDownBps)) · ↑ \(SystemResourceMonitor.formatBps(s.netUpBps))"
-            return (s.netDownBps == nil && s.netUpBps == nil) ? "—" : text
-        case .gpu:
-            return s.gpuPercent.map { String(format: "%.0f%%", $0) } ?? "—"
+            guard s.netDownBps != nil || s.netUpBps != nil else { return ("↓ —", "↑ —") }
+            return ("↓ \(SystemResourceMonitor.formatBps(s.netDownBps))",
+                    "↑ \(SystemResourceMonitor.formatBps(s.netUpBps))")
+        case .cpu, .memory, .gpu:
+            return ("—", "—")
+        }
+    }
+
+    /// 紧凑密度行数值：百分比项给百分比，速率项并成一行
+    private func compactValue(_ item: NotchResourceItem) -> String {
+        switch item {
+        case .cpu, .memory, .gpu:
+            return percentText(item)
+        case .disk, .network:
+            let lines = rateLines(item)
+            return "\(lines.read) · \(lines.write)"
         }
     }
 
@@ -535,8 +774,7 @@ struct NotchContentView: View {
                     .padding(.top, 2)
             }
         }
-        .frame(width: renderColumnWidth(Self.musicColumnWidth))
-        .frame(maxWidth: stretchForRender ? .infinity : nil, alignment: .leading)
+        .frame(width: effectiveColumnWidth(Self.musicColumnWidth))
     }
 
     private func musicBody(_ info: NowPlayingInfo) -> some View {
@@ -664,32 +902,32 @@ struct NotchContentView: View {
     }
 
     private func moduleHeader(_ icon: String, _ title: String) -> some View {
-        HStack(spacing: 6) {
+        HStack(spacing: compactMode ? 4 : 6) {
             Image(systemName: icon)
-                .font(.system(size: 11, weight: .medium))
+                .font(.system(size: compactMode ? 9 : 11, weight: .medium))
                 .foregroundColor(.secondary)
             Text(title)
-                .font(.system(size: 12, weight: .semibold))
+                .font(.system(size: compactMode ? 10 : 12, weight: .semibold))
                 .foregroundColor(.secondary)
             Spacer()
         }
     }
 
     private var header: some View {
-        HStack(spacing: 8) {
+        HStack(spacing: compactMode ? 4 : 8) {
             Button(L10n.tr("今天")) {
                 model.reset()
             }
             .buttonStyle(.plain)
-            .font(.system(size: 11))
+            .font(.system(size: compactMode ? 10 : 11))
             .foregroundColor(.secondary)
 
             Spacer()
             Text(model.monthTitle)
-                .font(.system(size: 14, weight: .semibold))
+                .font(.system(size: compactMode ? 12 : 14, weight: .semibold))
             Spacer()
 
-            HStack(spacing: 4) {
+            HStack(spacing: compactMode ? 2 : 4) {
                 monthNavButton("chevron.left") { model.moveMonth(-1) }
                 monthNavButton("chevron.right") { model.moveMonth(1) }
             }
@@ -699,9 +937,9 @@ struct NotchContentView: View {
     private func monthNavButton(_ symbol: String, action: @escaping () -> Void) -> some View {
         Button(action: action) {
             Image(systemName: symbol)
-                .font(.system(size: 11, weight: .medium))
+                .font(.system(size: compactMode ? 10 : 11, weight: .medium))
                 .foregroundColor(.secondary)
-                .frame(width: 20, height: 20)
+                .frame(width: compactMode ? 14 : 16, height: compactMode ? 14 : 16)
                 .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
@@ -711,7 +949,7 @@ struct NotchContentView: View {
         HStack(spacing: 0) {
             ForEach(model.weekdaySymbols, id: \.self) { symbol in
                 Text(symbol)
-                    .font(.system(size: 10))
+                    .font(.system(size: compactMode ? 9 : 10))
                     .foregroundColor(.secondary)
                     .frame(maxWidth: .infinity)
             }
@@ -719,12 +957,12 @@ struct NotchContentView: View {
     }
 
     private var monthGrid: some View {
-        LazyVGrid(columns: Self.columns, spacing: 4) {
+        LazyVGrid(columns: Self.columns, spacing: 2) {
             ForEach(Array(model.monthCells().enumerated()), id: \.offset) { _, cell in
                 if let date = cell {
                     dayCell(date)
                 } else {
-                    Color.clear.frame(height: 30)
+                    Color.clear.frame(height: compactMode ? 17 : 22)
                 }
             }
         }
@@ -733,26 +971,26 @@ struct NotchContentView: View {
     private func dayCell(_ date: Date) -> some View {
         let selected = model.isSelected(date)
         let today = model.isToday(date)
-        return VStack(spacing: 2) {
+        return VStack(spacing: compactMode ? 1 : 2) {
             Text("\(model.dayNumber(date))")
-                .font(.system(size: 12, weight: selected || today ? .semibold : .regular))
+                .font(.system(size: compactMode ? 10 : 12, weight: selected || today ? .semibold : .regular))
                 .foregroundColor(selected ? .white : (today ? accent : .primary))
             Circle()
                 .fill(selected ? Color.white.opacity(0.9) : accent)
-                .frame(width: 3, height: 3)
+                .frame(width: compactMode ? 2 : 3, height: compactMode ? 2 : 3)
                 .opacity(model.hasEvents(date) ? 1 : 0)
         }
         .frame(maxWidth: .infinity)
-        .frame(height: 30)
+        .frame(height: compactMode ? 17 : 22)
         .background {
             if selected {
                 Circle()
                     .fill(accent)
-                    .frame(width: 26, height: 26)
+                    .frame(width: compactMode ? 15 : 20, height: compactMode ? 15 : 20)
             } else if today {
                 Circle()
                     .strokeBorder(accent.opacity(0.7), lineWidth: 1)
-                    .frame(width: 26, height: 26)
+                    .frame(width: compactMode ? 15 : 20, height: compactMode ? 15 : 20)
             }
         }
         .contentShape(Rectangle())
@@ -765,9 +1003,9 @@ struct NotchContentView: View {
     /// 装不下就压缩到剩余空间内滚动（文字不缩放）；collapseDayEvents 仅用于测量
     /// 日历固定部分高度（收起列表，只留标题）
     @ViewBuilder private var daySection: some View {
-        VStack(alignment: .leading, spacing: 8) {
+        VStack(alignment: .leading, spacing: compactMode ? 4 : 6) {
             Text(model.selectedTitle)
-                .font(.system(size: 12, weight: .medium))
+                .font(.system(size: compactMode ? 10 : 12, weight: .medium))
                 .foregroundColor(.secondary)
 
             if !collapseDayEvents {
@@ -791,7 +1029,7 @@ struct NotchContentView: View {
                         .padding(.vertical, 6)
                 } else {
                     ScrollView(.vertical, showsIndicators: false) {
-                        VStack(alignment: .leading, spacing: 8) {
+                        VStack(alignment: .leading, spacing: 6) {
                             ForEach(model.dayEvents) { item in
                                 HStack(alignment: .top, spacing: 8) {
                                     RoundedRectangle(cornerRadius: 1.5)
@@ -819,24 +1057,39 @@ struct NotchContentView: View {
     }
 }
 
-/// 百分比资源项（CPU/内存/GPU）的用量进度条：灰色轨道 = 总量 100%（恒显完整宽度），
-/// 彩色填充 = 当前用量（左→右），一眼区分已用/未用
-private struct ResourceProgressBar: View {
+/// 资源项的环形仪表：灰色轨道 = 无用量参照，彩色弧（各资源项各自的色相）= 当前用量
+/// （自 12 点顺时针），环心为数值文字（不可用时显示「—」）；用量变化做 0.4s 缓出插值
+/// （2s 采样不至于跳变）
+private struct ResourceRing: View {
     let progress: Double?
+    let text: String
+    let size: CGFloat
+    let lineWidth: CGFloat
+    let fontSize: CGFloat
+    let tint: Color
 
     var body: some View {
-        GeometryReader { proxy in
-            ZStack(alignment: .leading) {
-                Capsule()
-                    .fill(Color.primary.opacity(0.25))
-                if let progress, progress > 0 {
-                    Capsule()
-                        .fill(Color.accentColor)
-                        .frame(width: proxy.size.width * min(1, max(0, progress)))
-                }
+        ZStack {
+            Circle()
+                .inset(by: lineWidth / 2)
+                .stroke(Color.primary.opacity(0.15), lineWidth: lineWidth)
+            if let progress, progress > 0.001 {
+                Circle()
+                    .inset(by: lineWidth / 2)
+                    .trim(from: 0, to: min(1, max(0, progress)))
+                    .stroke(tint,
+                            style: StrokeStyle(lineWidth: lineWidth, lineCap: .round))
+                    .rotationEffect(.degrees(-90))
+                    .animation(.easeOut(duration: 0.4), value: progress)
             }
+            Text(text)
+                .font(.system(size: fontSize, weight: .semibold))
+                .monospacedDigit()
+                .lineLimit(1)
+                .minimumScaleFactor(0.7)
+                .padding(.horizontal, lineWidth + 1)
         }
-        .frame(height: 5)
+        .frame(width: size, height: size)
     }
 }
 
@@ -884,26 +1137,78 @@ private struct ResourceSparkline: View {
     }
 }
 
-/// 灵动岛面板：非激活 borderless 面板，深色 HUD 磨砂，以 iOS 风格弹簧动画从刘海
-/// 「生长」展开、收起时缩回刘海（NotchSpringAnimator 只驱动 frame，全程不透明：
-/// 形状在刘海形药丸↔长方形间弹簧互变，无透明度渐变）。
+/// 灵动岛面板：非激活 borderless 面板，纯黑底，形状 = 「刘海形」：
+/// 顶边满宽且贴屏幕顶（盖住真刘海）、顶部两个角位补月牙黑并沿凹弧收细到内缩的竖直侧墙
+/// （外侧背景在角上呈圆角：右上 ╭ / 左上呈 ╮，与真刘海肩部同形）、底部两角外凸圆角，
+/// 半径随面板宽度相对刘海宽等比放大（始终像「放大版刘海」）。
 /// 悬停/点击/Esc 判定全部由 NotchHotspotController 的 listen-only tap 完成，
 /// 本面板只负责内容展示（不成为 key，无键盘交互）。
+///
+/// 尺寸 = 内容自适应：卡片取模块自然尺寸（日历列宽 300，卡片 ≈ 320 宽、自然高 ≈ 229–252），
+/// 面板 = 卡片 + 可见外边距（四面 16，另补遮罩侧墙内缩 ≈15）
+/// + 顶部刘海条（仅保留屏幕边界，日程多时卡片向下生长、到上限后列表滚动）。
+/// 模块切换有两路：顶部条左上角的箭头按钮（面板最小宽度保证它们不被刘海挡住），
+/// 以及面板范围内的双指左右滑动
+/// （local monitor 收 scrollWheel，锁横轴累积超阈值切一张；循环切换，单模块时箭头置灰）。
+/// 动画（NotchSpringAnimator 只驱动 frame，全程不透明：形状渐变本身就是全部视觉效果，
+/// 无透明度渐变，DEV-022）：
+/// - 展开两段连续：段1 横向拉到 80% 终宽（临界阻尼无回弹，高度停在迷你刘海高）→
+///   引导分量进度达 handoffProgress 时以当前值/速度无缝续接段2 纵向+剩余横向
+///   （无停顿，视觉上是一段连续运动，仅终点一次过冲：宽/高均达 ~105% 再回弹到 100%）；
+/// - 位置以最终窗口的顶边中点（centerX/topY）为锚点，尺寸过冲时左右/上下对称外扩，
+///   窗口整体不发生平移（DEV-027）；
+/// - 收起镜像两段：段1 高度收到刘海高（临界阻尼）→ 无缝续接段2 横向收拢回迷你刘海
+///   → 动画结束才 orderOut；
+/// - 打断续接（DEV-023）：弹簧以当前值/速度重定向，在途 handoff/completion 作废。
+/// 起点/收起终点的迷你刘海 = 比真刘海小一圈（顶边贴屏幕顶、左右/底各内缩），
+/// 完全藏在刘海硬件后不可见。
 final class NotchPanel: NSPanel {
-    /// 单卡片时面板最小宽/高（呼吸边距下限）；最大宽高由设置页配置
-    static let minWidth: CGFloat = 420
-    static let minHeight: CGFloat = 120
-    /// 圆角半径（≈Mac 屏幕圆角；屏幕圆角无公开 API 可查询）
-    static let cornerRadius: CGFloat = 16
+    /// 圆角基准：刘海宽 180pt 时的目测半径（四角同半径），随面板宽度相对刘海宽等比放大
+    static let referenceNotchWidth: CGFloat = 180
+    static let cornerBase: CGFloat = 7
+    /// 迷你刘海相对真刘海的内缩（左右/底部；顶边贴屏幕顶）
+    static let startInset: CGFloat = 6
+    /// 段1 横向目标宽度比例（终宽的 80%），到位前以 handoff 无缝续接剩余横向+纵向
+    static let stageOneWidthFraction: CGFloat = 0.8
+    /// 段1 引导分量（展开=宽度/收起=高度）位移进度达到该比例即交接下一段
+    static let handoffProgress: CGFloat = 0.85
+    /// 顶部条箭头与刘海硬件之间的最小间距（决定面板最小宽度）
+    private static let arrowNotchClearance: CGFloat = 4
     private lazy var springAnimator = NotchSpringAnimator(panel: self)
-    /// 弹簧正在趋向的目标 frame（present/refit/dismiss 更新）。
+    /// 弹簧正在趋向的目标 frame（present/dismiss 更新）。
     /// 控制器保活/点击判定用这个，而不是 present() 返回时刻的瞬时 frame：
-    /// 展开动画从刘海矩形开始，那一刻的真实 frame 还是刘海大小（DEV-024 修复后
+    /// 展开动画从迷你刘海开始，那一刻的真实 frame 还是迷你大小（DEV-024 修复后
     /// 窗口尺寸真实可变，原来「present 后 frame 已是终值」的隐含前提不再成立）。
     private(set) var targetFrame: NSRect = .zero
 
+    /// present 上下文（switchModule / refit 复用；面板尺寸随内容变化）
+    private var lastScreen: NSScreen?
+    private var lastNotchSize: CGSize = .zero
+    private var lastNotchTL: CGRect = .zero
+    private var lastModel: NotchCalendarViewModel?
+    private var displayedModule: NotchContentView.Module?
+    /// 顶部箭头 / 双指左右滑动切换回调（-1 = 上一张，+1 = 下一张）
+    private var onNavigateModule: ((Int) -> Void)?
+    private var lastLayout: PanelLayout?
+
+    /// 双指左右滑动手势监视（local monitor）：只看本窗口范围内的 scrollWheel
+    private var scrollMonitor: Any?
+    /// 手势累积量（横向/纵向）与锁轴结果：一次手势只切一张，纵向滚动原样放行
+    private var swipeAccumulatedX: CGFloat = 0
+    private var swipeAccumulatedY: CGFloat = 0
+    private var swipeIsHorizontal: Bool?
+    private var swipeDidTrigger = false
+    /// 锁轴所需的最小累积位移（pt）
+    private static let swipeAxisLockThreshold: CGFloat = 12
+    /// 触发切换所需的横向累积位移（pt）
+    private static let swipeTriggerDistance: CGFloat = 50
+    /// 无 phase 事件（滚轮/鼠标）间隔超过该值即视为新手势（s）
+    private static let swipeIdleGap: TimeInterval = 0.25
+    /// 上一个滚动事件的时间戳（判新手势用）
+    private var swipeLastEventTimestamp: TimeInterval = 0
+
     init() {
-        super.init(contentRect: NSRect(x: 0, y: 0, width: Self.minWidth, height: 200),
+        super.init(contentRect: NSRect(x: 0, y: 0, width: 400, height: 200),
                    styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
         self.level = .screenSaver
         self.isOpaque = false
@@ -913,248 +1218,498 @@ final class NotchPanel: NSPanel {
         self.isReleasedWhenClosed = false
         self.animationBehavior = .none
         self.hidesOnDeactivate = false
-        // 固定深色外观：HUD 磨砂 + 白字（灵动岛风格，不随系统深浅模式变化）
+        // 固定深色外观 + 白字（灵动岛风格，不随系统深浅模式变化）
         self.appearance = NSAppearance(named: .darkAqua)
+        // 双指左右滑动切模块：local monitor 在事件分发前拿到 scrollWheel，
+        // 不受卡片内 SwiftUI 滚动视图是否吃掉事件的影响（面板隐藏时直接放行）
+        scrollMonitor = NSEvent.addLocalMonitorForEvents(matching: .scrollWheel) { [weak self] event in
+            self?.handleScrollWheel(event) ?? event
+        }
+    }
+
+    deinit {
+        if let scrollMonitor { NSEvent.removeMonitor(scrollMonitor) }
     }
 
     override var canBecomeKey: Bool { false }
     override var canBecomeMain: Bool { false }
 
-    /// 面板布局决策结果（present 与 refit 共用）
+    /// 面板布局决策结果（present / switchModule / refit 共用）
     private struct PanelLayout {
         let width: CGFloat
         let height: CGFloat
-        let naturals: [CGSize]
+        /// 卡片尺寸（含卡片内边距）
+        let card: CGSize
+        /// 内容布局高（含卡片内边距，即渲染端 `.frame(height:)` 的值；超出卡片高时靠 scale 缩小）
+        let contentHeight: CGFloat
+        /// 内容等比缩小系数（≤1，仅当固定部分都装不下时 <1）
         let scale: CGFloat
+        /// 是否采用紧凑密度（与渲染端 NotchContentView.compactMode 对齐）
+        let compact: Bool
+        /// 遮罩肩弧造成的左右侧墙内缩（渲染端据此避让左右箭头按钮）
+        let sideInset: CGFloat
     }
 
-    /// 尺寸决策：
-    /// - 宽：双卡片 = 设置最大宽（两卡片各占一半）；单卡片 = 内容自然宽（上下限钳制）；
-    /// - 高：内容驱动（最高卡片的渲染目标高 + 面板内边距），上限钳制到设置最大高/屏幕。
-    ///   日历卡日程列表装得下就完整展开；装不下压到槽高、列表在剩余空间滚动（文字不缩放）；
-    ///   仅固定部分（收起日程）也超槽时才整体等比缩小兕底；
-    /// - 双卡片时系统资源卡拉伸到驱动卡目标高测量（渲染时行均匀分布填满卡片）。
-    private static func computeLayout(screen: NSScreen, model: NotchCalendarViewModel) -> PanelLayout {
-        let maxW = min(CGFloat(SettingsStore.shared.notchMaxWidth), screen.frame.width - 40)
-        let maxH = min(CGFloat(SettingsStore.shared.notchMaxHeight), screen.frame.height - 80)
-        let outerH = NotchContentView.outerHPadding
-        let outerV = NotchContentView.outerVPadding
-        let modules = NotchContentView.orderedVisibleModules
-        let slotH = max(1, maxH - outerV * 2)
+    /// 尺寸决策：面板尺寸随内容自适应——卡片取模块自然尺寸（宽 = 模块自然列宽 + 内边距，
+    /// 高 = 内容自然高），面板 = 卡片 + 可见外边距（含遮罩侧墙内缩）+ 顶部刘海条。
+    /// 仅保留屏幕边界：卡片高超过「屏幕高 − 80 − 刘海顶部条」时压缩（日历日程列表滚动 /
+    /// 资源切紧凑密度 / 仍装不下才整体等比缩小）。
+    private static func computeLayout(screen: NSScreen, notchSize: CGSize,
+                                      model: NotchCalendarViewModel,
+                                      module: NotchContentView.Module?) -> PanelLayout {
+        let maxCardH = max(1, screen.frame.height - 80
+                              - notchSize.height
+                              - NotchContentView.switcherGap
+                              - NotchContentView.outerVPadding)
+        // 面板宽还要给左右遮罩侧墙内缩（≈14）+ 可见外边距留余量
+        let hMargin = NotchContentView.outerHPadding
+        let maxCardW = max(1, screen.frame.width - 16 - hMargin * 2 - 32)
 
-        // 日历卡两档测量：全高（日程全展开，测量上限放大）/ 固定高（收起日程列表）
-        func calendarHeights(index: Int, columnWidth: CGFloat?) -> (full: CGFloat, fixed: CGFloat, naturalWidth: CGFloat) {
-            let full = NotchContentView.measureCardSize(index: index, columnWidth: columnWidth,
-                                                        dayListMaxHeight: 2000, model: model)
-            let fixed = NotchContentView.measureCardSize(index: index, columnWidth: columnWidth,
-                                                         collapseDayEvents: true, model: model)
-            return (full.height, fixed.height, full.width)
-        }
-        // 渲染目标高：日程装得下用全高；装不下压到槽高（日程滚动）；固定部分也超槽则保持固定高（缩小兕底）
-        func renderTarget(full: CGFloat, fixed: CGFloat) -> CGFloat {
-            fixed >= slotH ? max(1, fixed) : max(1, min(full, slotH))
+        // 空状态（无启用模块）：提示卡片固定尺寸（缩成小条不好点）
+        guard let module else {
+            let card = CGSize(width: min(300, maxCardW), height: min(150, maxCardH))
+            return Self.makeLayout(card: card, contentHeight: card.height, scale: 1, compact: false,
+                                   notchSize: notchSize, screen: screen)
         }
 
-        if modules.count >= 2 {
-            let slotW = (maxW - outerH * 2 - NotchContentView.cardGap) / 2
-            let columnW = slotW - NotchContentView.cardPadding * 2
-            var naturals = Array(repeating: CGSize.zero, count: modules.count)
-            var targets: [CGFloat] = Array(repeating: 0, count: modules.count)
-            // 先测非资源卡（日历/正在播放）目标高，面板高度由其中最高者驱动
-            for (i, module) in modules.enumerated() where module != .resources {
-                if module == .calendar {
-                    let h = calendarHeights(index: i, columnWidth: columnW)
-                    targets[i] = renderTarget(full: h.full, fixed: h.fixed)
-                    naturals[i] = CGSize(width: h.naturalWidth, height: targets[i])
-                } else {
-                    let natural = NotchContentView.measureCardSize(index: i, columnWidth: columnW, model: model)
-                    targets[i] = renderTarget(full: natural.height, fixed: natural.height)
-                    naturals[i] = CGSize(width: natural.width, height: targets[i])
-                }
-            }
-            // 资源卡拉伸到驱动卡目标高测量，渲染时与驱动卡等高
-            for (i, module) in modules.enumerated() where module == .resources {
-                let natural = NotchContentView.measureCardSize(index: i, columnWidth: columnW,
-                                                               columnHeight: max(1, targets.max() ?? slotH),
-                                                               model: model)
-                targets[i] = natural.height
-                naturals[i] = natural
-            }
-            let scale = min(1, slotH / max(1, targets.max() ?? slotH))
-            let height = Self.clamp(scale * max(1, targets.max() ?? slotH) + outerV * 2,
-                                    min(Self.minHeight, maxH), maxH)
-            return PanelLayout(width: maxW, height: height, naturals: naturals, scale: scale)
+        let hPadding = NotchContentView.cardPadding
+        let cardW = min(NotchContentView.naturalColumnWidth(for: module) + hPadding * 2, maxCardW)
+        let columnW = max(1, cardW - hPadding * 2)
+
+        func measure(compact: Bool, collapseDayEvents: Bool = false) -> CGFloat {
+            NotchContentView.measureCardSize(module: module, columnWidth: columnW,
+                                             dayListMaxHeight: module == .calendar && !collapseDayEvents ? 2000 : nil,
+                                             collapseDayEvents: collapseDayEvents,
+                                             compact: compact, model: model).height
         }
-        if modules.count == 1 {
-            let naturalWidth: CGFloat
-            let target: CGFloat
-            if modules[0] == .calendar {
-                let h = calendarHeights(index: 0, columnWidth: nil)
-                naturalWidth = h.naturalWidth
-                target = renderTarget(full: h.full, fixed: h.fixed)
+
+        /// 内容布局高（含卡片内边距，即渲染端 `.frame(height:)` 的值）；超出上限时缩放兜底
+        let contentHeight: CGFloat
+        let compact: Bool
+        let scale: CGFloat
+        switch module {
+        case .calendar:
+            let full = measure(compact: false)
+            let fixed = measure(compact: false, collapseDayEvents: true)
+            if fixed < maxCardH {
+                // 固定部分装得下：日程全部展开；列表超出上限时在卡片内滚动
+                contentHeight = min(full, maxCardH)
+                compact = false
+                scale = 1
             } else {
-                let natural = NotchContentView.measureCardSize(index: 0, columnWidth: nil, model: model)
-                naturalWidth = natural.width
-                target = renderTarget(full: natural.height, fixed: natural.height)
+                // 连固定部分都超上限：先切紧凑密度，仍超才整体等比缩小
+                let compactFixed = measure(compact: true, collapseDayEvents: true)
+                contentHeight = compactFixed
+                compact = true
+                scale = min(1, maxCardH / max(1, compactFixed))
             }
-            let scale = min(1, (maxW - outerH * 2) / max(1, naturalWidth), slotH / target)
-            let width = Self.clamp(naturalWidth * scale + outerH * 2, min(Self.minWidth, maxW), maxW)
-            let height = Self.clamp(target * scale + outerV * 2, min(Self.minHeight, maxH), maxH)
-            return PanelLayout(width: width, height: height,
-                               naturals: [CGSize(width: naturalWidth, height: target)], scale: scale)
+        case .resources:
+            let natural = measure(compact: false)
+            if natural <= maxCardH {
+                contentHeight = natural
+                compact = false
+                scale = 1
+            } else {
+                let compactNatural = measure(compact: true)
+                contentHeight = compactNatural
+                compact = true
+                scale = min(1, maxCardH / max(1, compactNatural))
+            }
+        case .music:
+            let natural = measure(compact: false)
+            contentHeight = natural
+            compact = false
+            scale = min(1, maxCardH / max(1, natural))
         }
-        return PanelLayout(width: Self.clamp(outerH * 2, min(Self.minWidth, maxW), maxW),
-                           height: Self.clamp(outerV * 2, min(Self.minHeight, maxH), maxH),
-                           naturals: [], scale: 1)
+        let cardH = min(maxCardH, contentHeight)
+        return Self.makeLayout(card: CGSize(width: cardW, height: cardH),
+                               contentHeight: contentHeight, scale: scale, compact: compact,
+                               notchSize: notchSize, screen: screen)
     }
 
-    /// 依据刘海热区（主屏左上原点坐标）重建内容、测尺寸、定位，并从刘海矩形「生长」展开。
-    /// 面板顶边贴刘海下边缘（热区竖向范围 = 刘海竖向范围）、水平居中刘海；
+    /// 面板尺寸 = 卡片 + 可见外边距（与底部同值）+ 顶部刘海条；宽高都钳制进屏幕，水平居中刘海。
+    /// 遮罩的左右侧墙相对窗口边缘内缩（肩弧半径），可见黑边只剩内缩以外的部分，
+    /// 所以面板宽要把内缩额外补上，否则卡片会紧贴可见边缘。
+    /// 切换箭头放在顶部条左上角，不占用卡片左右的留白；面板宽还有下限（刘海 + 左侧箭头区），
+    /// 保证窄卡片（正在播放）时两个箭头也不被刘海挡住。
+    private static func makeLayout(card: CGSize, contentHeight: CGFloat, scale: CGFloat,
+                                   compact: Bool, notchSize: CGSize, screen: NSScreen) -> PanelLayout {
+        let height = Self.clamp(card.height + notchSize.height
+                                    + NotchContentView.switcherGap + NotchContentView.outerVPadding,
+                                notchSize.height + 8, screen.frame.height - 80)
+        // 侧墙内缩随面板宽变化（半径 ∝ 宽），迭代两次即收敛；
+        // 同时保证左侧够放两个箭头（+ 与刘海的最小间距），窄卡片面板据此加宽
+        let hMargin = NotchContentView.outerHPadding
+        let arrowReach = hMargin + NotchContentView.arrowBlockWidth + Self.arrowNotchClearance
+        var width = card.width + hMargin * 2
+        for _ in 0..<3 {
+            let sideInset = NotchShapeContainerView.sideInset(width: width, height: height,
+                                                              referenceWidth: notchSize.width)
+            let natural = card.width + (hMargin + sideInset) * 2
+            let arrowsMin = notchSize.width + (arrowReach + sideInset) * 2
+            width = max(natural, arrowsMin)
+        }
+        width = Self.clamp(width, notchSize.width + 24, screen.frame.width - 16)
+        let sideInset = NotchShapeContainerView.sideInset(width: width, height: height,
+                                                          referenceWidth: notchSize.width)
+        return PanelLayout(width: width, height: height, card: card,
+                           contentHeight: contentHeight, scale: scale, compact: compact,
+                           sideInset: sideInset)
+    }
+
+    /// 悬停延时到期 / 单击热区后展示：顶边贴屏幕顶、水平居中于刘海、尺寸由内容决定。
     /// 每次 present 重建 contentView（模型重置到今天，同时取最新内容设置）。
-    /// 尺寸决策见 computeLayout（日程异步加载完成后的高度修正走 refit）。
-    func present(hotspotTL: CGRect, notchTL: CGRect, screen: NSScreen, model: NotchCalendarViewModel) {
-        let layout = Self.computeLayout(screen: screen, model: model)
-        contentView = makeContentView(model: model, width: layout.width, height: layout.height,
-                                      cardNaturals: layout.naturals, scale: layout.scale)
+    /// 两段连续展开见类文档；打断续接走 isVisible 分支单段重定向。
+    func present(hotspotTL: CGRect, notchTL: CGRect, screen: NSScreen,
+                 model: NotchCalendarViewModel, module: NotchContentView.Module?,
+                 onNavigateModule: @escaping (Int) -> Void) {
+        lastScreen = screen
+        lastNotchSize = notchTL.size
+        lastNotchTL = notchTL
+        lastModel = model
+        displayedModule = module
+        self.onNavigateModule = onNavigateModule
+
+        let layout = Self.computeLayout(screen: screen, notchSize: notchTL.size,
+                                        model: model, module: module)
+        lastLayout = layout
+        contentView = makeContentView(model: model, layout: layout)
         // 注意：这里不 setContentSize —— 它是瞬时几何赋值，打断路径上会把窗口尺寸直接
         // 跳到终值（原点锚定、另一侧瞬移），产生整块平移感（DEV-023）；尺寸交给弹簧 setFrame
 
-        let x = Self.clamp(hotspotTL.midX - layout.width / 2,
-                           screen.frame.minX + 8, screen.frame.maxX - layout.width - 8)
-        // 热区 TL 坐标最大 y = 刘海下边缘；转回 Cocoa 坐标作为面板顶边
         let unionMaxY = NSScreen.screens.reduce(CGRect.null) { $0.union($1.frame) }.maxY
-        let finalFrame = NSRect(x: x, y: unionMaxY - hotspotTL.maxY - layout.height,
-                                width: layout.width, height: layout.height)
+        let finalFrame = Self.expandedFrame(notchTL: notchTL, screen: screen, layout: layout, unionMaxY: unionMaxY)
         targetFrame = finalFrame
         if isVisible {
-            // 收起动画被打断（快速反复进出）：不重放、不触碰窗口几何，只重定向弹簧，
-            // 从当前 frame/速度无缝续接展开
+            // 收起动画被打断（快速反复进出）：从当前 frame/速度单段重定向到终点
             invalidateShadow()
+            springAnimator.animate(to: finalFrame)
         } else {
-            // 起始 frame = 刘海中心的半尺寸迷你药丸（嵌在刘海内），弹簧生长成长方形；
-            // 全程不透明（DEV-022），形状渐变本身就是全部视觉效果
-            setFrame(cocoaNotchFrame(notchTL: notchTL, unionMaxY: unionMaxY), display: false)
+            let startFrame = Self.miniNotchFrame(notchTL: notchTL, unionMaxY: unionMaxY)
+            setFrame(startFrame, display: false)
             alphaValue = 1
             orderFront(nil)
             invalidateShadow()
+            // 两段连续（中途不停顿、无中间回弹，全程不透明 DEV-022）：段1 横向拉到
+            // 80% 终宽（临界阻尼，高度停在迷你刘海高）→ 宽度进度达 handoffProgress
+            // 时以当前值/速度无缝续接段2 纵向+剩余横向（仅终点一次过冲）。
+            // 面板较窄（80% 终宽 ≤ 迷你刘海宽）时无横向段，直接单段展开
+            let stageOneWidth = finalFrame.width * Self.stageOneWidthFraction
+            if stageOneWidth > startFrame.width + 1 {
+                let stageOne = NSRect(x: notchTL.midX - stageOneWidth / 2,
+                                      y: unionMaxY - startFrame.height,
+                                      width: stageOneWidth, height: startFrame.height)
+                springAnimator.animate(to: stageOne,
+                                       handoff: .init(targetFrame: finalFrame,
+                                                      progress: Self.handoffProgress))
+            } else {
+                springAnimator.animate(to: finalFrame)
+            }
         }
-        springAnimator.animate(to: finalFrame)
     }
 
-    /// 收起：全程不透明，弹簧缩回刘海中心的半尺寸迷你药丸，动画结束才 orderOut。
-    /// 控制器状态在 hidePanel 即时更新，期间再 present 会从当前 frame 无缝续接展开
-    /// （本方法的 orderOut 已作废，不会执行）。
+    /// 收起（镜像展开的两段连续弹簧）：段1 高度收到刘海高（临界阻尼无回弹、宽度不动）→
+    /// 进度达 handoffProgress 时无缝续接段2 横向收拢回迷你刘海，动画结束才 orderOut。
+    /// 全程不透明。控制器状态在 hidePanel 即时更新，期间再 present 会以单段重定向
+    /// 无缝续接展开（在途 handoff/completion 作废，orderOut 不会执行）。
     func dismiss(notchTL: CGRect) {
         let unionMaxY = NSScreen.screens.reduce(CGRect.null) { $0.union($1.frame) }.maxY
-        let notchFrame = cocoaNotchFrame(notchTL: notchTL, unionMaxY: unionMaxY)
+        let notchFrame = Self.miniNotchFrame(notchTL: notchTL, unionMaxY: unionMaxY)
         targetFrame = notchFrame
-        springAnimator.animate(to: notchFrame, collapse: true) { [weak self] in
+        let stageOne = NSRect(x: frame.midX - frame.width / 2, y: unionMaxY - notchFrame.height,
+                              width: frame.width, height: notchFrame.height)
+        springAnimator.animate(to: stageOne, collapse: true,
+                               handoff: .init(targetFrame: notchFrame,
+                                              progress: Self.handoffProgress)) { [weak self] in
             self?.orderOut(nil)
         }
     }
 
-    /// 刘海矩形（主屏左上原点坐标）→ Cocoa 坐标（面板盖在刘海正上方）
-    /// 刘海矩形（主屏左上原点坐标）→ Cocoa 坐标。展开起点/收起终点：以刘海中心为锚
-    /// 缩到一半尺寸的迷你药丸（嵌在刘海内的初始形态），从它弹簧生长/缩回后消失。
-    private func cocoaNotchFrame(notchTL: CGRect, unionMaxY: CGFloat) -> NSRect {
-        let half = NSSize(width: notchTL.width / 2, height: notchTL.height / 2)
-        return NSRect(x: notchTL.midX - half.width / 2,
-                      y: unionMaxY - notchTL.midY - half.height / 2,
-                      width: half.width,
-                      height: half.height)
+    /// 终点 frame：顶边贴屏幕顶（盖住刘海）、水平居中于刘海、钳制进屏幕左右各 8pt
+    private static func expandedFrame(notchTL: CGRect, screen: NSScreen, layout: PanelLayout,
+                                      unionMaxY: CGFloat) -> NSRect {
+        let x = Self.clamp(notchTL.midX - layout.width / 2,
+                           screen.frame.minX + 8, screen.frame.maxX - layout.width - 8)
+        return NSRect(x: x, y: unionMaxY - layout.height, width: layout.width, height: layout.height)
     }
 
-    /// 日程加载/切换后重算布局并调整面板：顶边贴刘海不动（向下生长/收缩），同款弹簧动画。
-    /// contentView 按新尺寸重建；尺寸不变时跳过。
-    func refit(hotspotTL: CGRect, screen: NSScreen, model: NotchCalendarViewModel) {
-        let layout = Self.computeLayout(screen: screen, model: model)
-        guard abs(layout.height - frame.height) > 0.5 || abs(layout.width - frame.width) > 0.5 else { return }
-        contentView = makeContentView(model: model, width: layout.width, height: layout.height,
-                                      cardNaturals: layout.naturals, scale: layout.scale)
-        let x = Self.clamp(hotspotTL.midX - layout.width / 2,
-                           screen.frame.minX + 8, screen.frame.maxX - layout.width - 8)
-        let unionMaxY = NSScreen.screens.reduce(CGRect.null) { $0.union($1.frame) }.maxY
-        let target = NSRect(origin: NSPoint(x: x, y: unionMaxY - hotspotTL.maxY - layout.height),
-                            size: NSSize(width: layout.width, height: layout.height))
-        targetFrame = target
-        // 同款弹簧，与展开/收起手感一致
-        springAnimator.animate(to: target)
+    /// 迷你刘海：顶边贴屏幕顶、左右各收 startInset、底部收 startInset
+    /// （比真刘海小一圈，完全藏在刘海硬件后不可见）
+    private static func miniNotchFrame(notchTL: CGRect, unionMaxY: CGFloat) -> NSRect {
+        NSRect(x: notchTL.midX - (notchTL.width - startInset * 2) / 2,
+               y: unionMaxY - notchTL.height + startInset,
+               width: notchTL.width - startInset * 2,
+               height: notchTL.height - startInset)
+    }
+
+    /// 切换模块（左右箭头 / 双指左右滑动）：面板尺寸按新模块内容弹簧变形，并重建 contentView
+    func switchModule(to module: NotchContentView.Module) {
+        guard let screen = lastScreen, let model = lastModel, displayedModule != module else { return }
+        displayedModule = module
+        let layout = Self.computeLayout(screen: screen, notchSize: lastNotchSize, model: model, module: module)
+        lastLayout = layout
+        contentView = makeContentView(model: model, layout: layout)
+        applyLayoutFrame(layout, screen: screen)
         invalidateShadow()
     }
 
-    /// 液态玻璃背景（macOS 26+）或磨砂底（旧系统），内容以 autoresizing 跟随铺满，圆角≈屏幕圆角。
-    /// 不透明度不再可调：使用系统默认外观（玻璃不染色、磨砂不降 alpha）。
+    /// 日程加载/切换后重测内容布局：尺寸变化时重建 contentView 并弹簧变形
+    func refit(model: NotchCalendarViewModel) {
+        guard let screen = lastScreen, let module = displayedModule else { return }
+        let layout = Self.computeLayout(screen: screen, notchSize: lastNotchSize, model: model, module: module)
+        defer { lastLayout = layout }
+        if let last = lastLayout,
+           abs(layout.scale - last.scale) <= 0.001, layout.compact == last.compact,
+           abs(layout.width - last.width) <= 0.5, abs(layout.height - last.height) <= 0.5,
+           abs(layout.card.height - last.card.height) <= 0.5,
+           abs(layout.card.width - last.card.width) <= 0.5,
+           abs(layout.contentHeight - last.contentHeight) <= 0.5 {
+            return
+        }
+        contentView = makeContentView(model: model, layout: layout)
+        applyLayoutFrame(layout, screen: screen)
+        invalidateShadow()
+    }
+
+    /// 可见面板切换尺寸：只能走弹簧重定向（DEV-023 禁止在途 setFrame），并同步命中区域用的目标 frame
+    private func applyLayoutFrame(_ layout: PanelLayout, screen: NSScreen) {
+        let unionMaxY = NSScreen.screens.reduce(CGRect.null) { $0.union($1.frame) }.maxY
+        let frame = Self.expandedFrame(notchTL: lastNotchTL, screen: screen,
+                                       layout: layout, unionMaxY: unionMaxY)
+        targetFrame = frame
+        guard isVisible else {
+            setFrame(frame, display: false)
+            return
+        }
+        springAnimator.animate(to: frame)
+    }
+
+    /// 纯黑背景直接铺在遮罩容器底（遮罩裁出刘海形），内容以 autoresizing 跟随。
     ///
     /// 结构红线（DEV-024）：hosting 必须以 addSubview + autoresizingMask 跟随容器，
-    /// 绝不能赋给 glass.contentView、绝不能对 hosting 用 Auto Layout 约束——
-    /// SwiftUI 固定 .frame 尺寸会经约束/玻璃层反向钳制窗口尺寸，setFrame 的宽高
+    /// 绝不能赋给玻璃 contentView、绝不能对 hosting 用 Auto Layout 约束——
+    /// SwiftUI 固定 .frame 尺寸会经约束链反向钳制窗口尺寸，setFrame 的宽高
     /// 被静默锁死（只有原点生效），「从刘海生长」就退化成全尺寸面板平移。
-    private func makeContentView(model: NotchCalendarViewModel, width: CGFloat, height: CGFloat,
-                                 cardNaturals: [CGSize], scale: CGFloat) -> NSView {
+    private func makeContentView(model: NotchCalendarViewModel, layout: PanelLayout) -> NSView {
         let hosting = NSHostingView(rootView: NotchContentView(model: model,
-                                                               displayWidth: width,
-                                                               displayHeight: height,
-                                                               cardNaturals: cardNaturals,
-                                                               cardScale: scale))
-        if #available(macOS 26.0, *) {
-            let glass = NSGlassEffectView()
-            glass.cornerRadius = Self.cornerRadius
-            glass.style = .regular
-            glass.addSubview(hosting)
-            hosting.frame = glass.bounds
-            hosting.autoresizingMask = [.width, .height]
-            return glass
-        }
-        let frost = NSVisualEffectView()
-        frost.material = .hudWindow
-        frost.blendingMode = .behindWindow
-        frost.state = .active
-        frost.wantsLayer = true
-        frost.layer?.cornerRadius = Self.cornerRadius
-        frost.layer?.cornerCurve = .continuous
-        frost.layer?.masksToBounds = true
-        frost.addSubview(hosting)
-        hosting.frame = frost.bounds
+                                                               displayWidth: layout.width,
+                                                               displayHeight: layout.height,
+                                                               notchHeight: lastNotchSize.height,
+                                                               displayModule: displayedModule,
+                                                               onNavigateModule: { [weak self] step in
+                                                                   self?.onNavigateModule?(step)
+                                                               },
+                                                               sideWallInset: layout.sideInset,
+                                                               cardSize: layout.card,
+                                                               cardContentHeight: layout.contentHeight,
+                                                               cardScale: layout.scale,
+                                                               compactMode: layout.compact))
+        let container = NotchShapeContainerView(referenceNotchWidth: lastNotchSize.width,
+                                                initialSize: CGSize(width: layout.width, height: layout.height))
+        container.addSubview(hosting)
+        hosting.frame = container.bounds
         hosting.autoresizingMask = [.width, .height]
-        return frost
+        return container
     }
 
     private static func clamp(_ value: CGFloat, _ minValue: CGFloat, _ maxValue: CGFloat) -> CGFloat {
         guard maxValue >= minValue else { return minValue }
         return min(max(value, minValue), maxValue)
     }
+
+    // MARK: - 双指左右滑动
+
+    /// 手势累积逻辑：只认非惯性的触控板事件；`.began` 清累积并按位移锁轴（横向明显占优才算），
+    /// 横向累积超阈值切一张并锁死到手势结束（一次滑动不连翻）；纵向滚动/惯性全部原样放行。
+    private func handleScrollWheel(_ event: NSEvent) -> NSEvent? {
+        guard isVisible, onNavigateModule != nil else { return event }
+        guard event.window === self || frame.contains(NSEvent.mouseLocation) else { return event }
+        // 惯性阶段（手指抬起后的余滑）不参与，避免一次顺滑拖出多张
+        guard event.momentumPhase == [] else { return event }
+
+        // 手势起点：触控板带 phase（.began）；传统滚轮/鼠标没有 phase，用事件间隔判定新手势
+        let newGesture: Bool
+        if event.phase == .began {
+            newGesture = true
+        } else if event.phase == [] {
+            newGesture = event.timestamp - swipeLastEventTimestamp > Self.swipeIdleGap
+        } else {
+            newGesture = false
+        }
+        swipeLastEventTimestamp = event.timestamp
+        if newGesture {
+            swipeAccumulatedX = 0
+            swipeAccumulatedY = 0
+            swipeIsHorizontal = nil
+            swipeDidTrigger = false
+        }
+        if event.phase == .ended || event.phase == .cancelled {
+            swipeIsHorizontal = nil
+            swipeDidTrigger = false
+            return event
+        }
+        guard !swipeDidTrigger else { return event }
+
+        swipeAccumulatedX += event.scrollingDeltaX
+        swipeAccumulatedY += event.scrollingDeltaY
+        if swipeIsHorizontal == nil {
+            let absX = abs(swipeAccumulatedX)
+            let absY = abs(swipeAccumulatedY)
+            guard max(absX, absY) >= Self.swipeAxisLockThreshold else { return event }
+            swipeIsHorizontal = absX > absY
+        }
+        guard swipeIsHorizontal == true, abs(swipeAccumulatedX) >= Self.swipeTriggerDistance else {
+            return event
+        }
+        swipeDidTrigger = true
+        // 双指左滑（deltaX < 0）= 下一张；右滑 = 上一张
+        onNavigateModule?(swipeAccumulatedX < 0 ? 1 : -1)
+        return event
+    }
+}
+
+/// 刘海形遮罩容器：顶部两角凹形肩弧（矩形角位补月牙黑，外侧背景呈圆角）、底部两角外凸圆角，
+/// 半径随容器宽度相对刘海宽
+/// 等比放大（弹簧每帧 setFrame 触发 layout 重建路径，动画全程保持「当前大小的刘海」）。
+/// 本视图提供纯黑底色并做形状裁剪，hosting 由外部铺满。
+private final class NotchShapeContainerView: NSView {
+    private let referenceWidth: CGFloat
+    private let maskLayer: CAShapeLayer
+
+    /// initialSize：创建时用已知面板终尺寸立即生成遮罩路径，
+    /// 避免首次 orderFront 在 layout() 之前露出一帧方形内容
+    init(referenceNotchWidth: CGFloat, initialSize: CGSize) {
+        self.referenceWidth = max(1, referenceNotchWidth)
+        self.maskLayer = CAShapeLayer()
+        // 弹簧 120Hz 改 path/frame 时禁用隐式动画，避免遮罩滞后于窗口几何
+        maskLayer.actions = ["path": NSNull(), "bounds": NSNull(), "position": NSNull()]
+        super.init(frame: NSRect(origin: .zero, size: initialSize))
+        wantsLayer = true
+        layer?.backgroundColor = NSColor.black.cgColor
+        layer?.mask = maskLayer
+        updateMask()
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
+
+    override var wantsUpdateLayer: Bool { true }
+
+    override func updateLayer() {
+        // AppKit 重建 backing layer 时重申底色/遮罩（常态下 init 已设好）
+        layer?.backgroundColor = NSColor.black.cgColor
+        layer?.mask = maskLayer
+    }
+
+    // 弹簧每帧 setFrame 改变 bounds 时 AppKit 触发 layout()，重建遮罩跟随当前尺寸
+    override func layout() {
+        super.layout()
+        updateMask()
+    }
+
+    /// 遮罩圆角：底角外凸圆角 + 顶部肩弧同源，半径随面板宽相对刘海宽等比放大
+    private static func radii(width: CGFloat, height: CGFloat,
+                              referenceWidth: CGFloat) -> (corner: CGFloat, shoulder: CGFloat) {
+        let scale = width / max(1, referenceWidth)
+        let corner = min(NotchPanel.cornerBase * scale, height / 2)
+        // 肩弧不能吃掉整个高度/宽度
+        return (corner, min(corner, height / 3, width / 6))
+    }
+
+    /// 左右可见边缘相对窗口边缘的内缩量（= 顶部肩弧半径）：
+    /// 面板尺寸决策据此补足可见外边距，否则卡片会贴在遮罩侧墙上看不见留白
+    static func sideInset(width: CGFloat, height: CGFloat, referenceWidth: CGFloat) -> CGFloat {
+        radii(width: width, height: height, referenceWidth: referenceWidth).shoulder
+    }
+
+    private func updateMask() {
+        let radii = Self.radii(width: bounds.width, height: bounds.height,
+                               referenceWidth: referenceWidth)
+        maskLayer.frame = bounds
+        maskLayer.path = Self.notchShapePath(width: bounds.width, height: bounds.height,
+                                             cornerRadius: radii.corner, shoulderRadius: radii.shoulder)
+    }
+
+    /// 刘海形路径（层坐标 y 向上）：
+    /// - 顶边 = 面板满宽且与屏幕顶边齐平（盖住真刘海，和屏幕顶边连成一条线）；
+    /// - 顶部两角 = 矩形角位上的月牙形黑色填充（凹形肩弧，弧心在角点正下方）：
+    ///   黑色在上面铺满整个角位，再沿凹弧收细到内缩 `s` 的竖直侧墙，
+    ///   使面板外侧背景在角上呈圆角（右上 ╭ / 左上 ╮），和真刘海肩部（屏幕顶边
+    ///   绕开刘海侧壁的倒角）同形；
+    /// - 底部两角 = 外凸圆角。
+    private static func notchShapePath(width: CGFloat, height: CGFloat,
+                                       cornerRadius r: CGFloat, shoulderRadius s: CGFloat) -> CGPath {
+        let path = CGMutablePath()
+        path.move(to: CGPoint(x: 0, y: height))                        // 顶边左端（屏幕顶边）
+        // 顶左肩弧：(0,h) → (s, h-s)，弧心 (0,h-s)，水平切顶边/竖直切左墙
+        path.addArc(center: CGPoint(x: 0, y: height - s), radius: s,
+                    startAngle: .pi / 2, endAngle: 0, clockwise: true)
+        path.addLine(to: CGPoint(x: s, y: r))                          // 左墙（内缩 s）
+        path.addArc(center: CGPoint(x: s + r, y: r), radius: r,
+                    startAngle: .pi, endAngle: .pi * 3 / 2, clockwise: false)  // 底左角
+        path.addLine(to: CGPoint(x: width - s - r, y: 0))              // 底边
+        path.addArc(center: CGPoint(x: width - s - r, y: r), radius: r,
+                    startAngle: .pi * 3 / 2, endAngle: .pi * 2, clockwise: false) // 底右角
+        path.addLine(to: CGPoint(x: width - s, y: height - s))         // 右墙（内缩 s）
+        // 顶右肩弧：(w-s, h-s) → (w, h)，弧心 (w,h-s)
+        path.addArc(center: CGPoint(x: width, y: height - s), radius: s,
+                    startAngle: .pi, endAngle: .pi / 2, clockwise: true)
+        path.closeSubpath()                                            // 顶边 → (0,h)
+        return path
+    }
 }
 
 /// iOS 风格弹簧动画驱动器（只驱动 NotchPanel 的窗口 frame，透明度恒定、不参与动画）。
+/// 四分量 = 锚点 centerX / 锚点 topY / width / height：每帧由锚点与尺寸反推 origin
+/// （x = centerX - width/2、y = topY - height），尺寸过冲时窗口围绕最终顶边中点
+/// 对称放大/收回，位置不发生整体平移（DEV-027）。
 /// macOS 对窗口 frame 没有公开的弹簧动画 API（NSAnimationContext 仅支持贝塞尔曲线，
 /// animator() 可动画属性的限制见 PITFALLS_DEV.md DEV-016），这里在主线程用定时器对弹簧
 /// 微分方程做半隐式欧拉积分后直接 setFrame。response + dampingFraction 语义同 UIKit，
-/// dampingFraction < 1 带过冲回弹。分量差异化调参见 expandTuning/collapseTuning。
+/// dampingFraction < 1 带过冲回弹。分量差异化调参：终点段/打断续接用
+/// expandTuning/collapseTuning，段1 引导段用 stageOneExpandTuning/stageOneCollapseTuning。
 /// 「刘海生长/缩回」全程必须不透明：任何 alpha 淡入淡出都会让早期生长不可见、
 /// 被感知成「从一侧滑入」（DEV-022），形状渐变本身就是全部视觉效果。
 /// 动画进行中再次 animate：各分量以当前值/速度为起点重定向（展开↔收起互相打断无缝续接），
-/// 旧动画未执行的 completion 作废。
+/// 旧动画未执行的 handoff 与 completion 作废。
 private final class NotchSpringAnimator {
-    /// 分量弹簧调参（response + 阻尼比），顺序对齐 springs：x, y, width, height。
-    /// 灵动岛式液体拉伸：宽先冲出（带过冲）、高慢半拍平滑下填、位置快速就位几乎不晃；
+    /// 分量弹簧调参（response + 阻尼比），顺序对齐 springs：centerX, topY, width, height。
+    /// 灵动岛式液体拉伸：宽先冲出（带过冲）、高慢半拍平滑下填、锚点临界阻尼零回弹；
     /// 单一组参数（四分量同步、阻尼比 0.72 过冲仅 ~4%）会被感知成线性生长。
-    private struct SpringTuning {
+    /// 过冲量实测（含交接初速，非静止起跳的理论值）：width ζ=0.47 ≈ 105%，
+    /// height ζ=0.66 ≈ 105%。
+    /// 单一分量调参；嵌在 file-private 类里，类型仅本文件可见
+    struct SpringTuning {
         let response: TimeInterval
         let dampingFraction: CGFloat
     }
-    /// 展开/重定向
+    /// 展开段2/重定向（终点段：宽先冲出带过冲、高慢半拍跟上）
     private static let expandTuning: [SpringTuning] = [
-        .init(response: 0.32, dampingFraction: 0.90),   // x
-        .init(response: 0.32, dampingFraction: 0.90),   // y
-        .init(response: 0.38, dampingFraction: 0.72),   // width：先冲出，~5% 过冲
-        .init(response: 0.52, dampingFraction: 0.78),   // height：慢半拍跟上
+        .init(response: 0.32, dampingFraction: 1.0),    // centerX：锚点零回弹
+        .init(response: 0.32, dampingFraction: 1.0),    // topY：锚点零回弹
+        .init(response: 0.38, dampingFraction: 0.47),   // width：先冲出，~105%
+        .init(response: 0.52, dampingFraction: 0.66),   // height：慢半拍跟上，~105%
     ]
-    /// 收起：宽度更快折回，更利落
+    /// 收起段2/重定向（终点段：宽度更快折回，更利落）
     private static let collapseTuning: [SpringTuning] = [
-        .init(response: 0.32, dampingFraction: 0.90),   // x
-        .init(response: 0.32, dampingFraction: 0.90),   // y
-        .init(response: 0.32, dampingFraction: 0.72),   // width：更快收拢
-        .init(response: 0.52, dampingFraction: 0.78),   // height
+        .init(response: 0.32, dampingFraction: 1.0),    // centerX：锚点零回弹
+        .init(response: 0.32, dampingFraction: 1.0),    // topY：锚点零回弹
+        .init(response: 0.32, dampingFraction: 0.47),   // width：更快收拢，~105%
+        .init(response: 0.52, dampingFraction: 0.66),   // height：~105%
+    ]
+    /// 段1 引导段（handoff 交接前）：临界阻尼无回弹——先横拉/先纵收本身不带过冲，
+    /// 回弹只留给交接后的终点段；本段静止分量的参数无实际作用
+    static let stageOneExpandTuning: [SpringTuning] = [
+        .init(response: 0.32, dampingFraction: 1.0),    // centerX
+        .init(response: 0.32, dampingFraction: 1.0),    // topY
+        .init(response: 0.34, dampingFraction: 1.0),    // width：横向拉开（临界阻尼）
+        .init(response: 0.52, dampingFraction: 1.0),    // height（本段不动）
+    ]
+    static let stageOneCollapseTuning: [SpringTuning] = [
+        .init(response: 0.32, dampingFraction: 1.0),    // centerX
+        .init(response: 0.32, dampingFraction: 1.0),    // topY
+        .init(response: 0.32, dampingFraction: 1.0),    // width（本段不动）
+        .init(response: 0.36, dampingFraction: 1.0),    // height：纵向先收（临界阻尼）
     ]
     /// settle 阈值：收紧到 0.25pt / 2pt·s⁻¹，避免尾部带速急停的微顿
     private static let valueEpsilon: CGFloat = 0.25
@@ -1196,11 +1751,23 @@ private final class NotchSpringAnimator {
         }
     }
 
-    /// 分量顺序：x, y, width, height
+    /// 分量顺序：centerX, topY, width, height（位置 = 锚点，origin 每帧反推）
     private var springs: [Spring]?
     private var completion: (() -> Void)?
     private var timer: Timer?
     private weak var panel: NotchPanel?
+
+    /// 中途交接（两段连续动画）：段1 引导分量位移进度达 progress 时，
+    /// 以当前值/速度无缝重定向到 targetFrame（无停顿、无中间回弹）
+    struct Handoff {
+        let targetFrame: NSRect
+        let progress: CGFloat
+    }
+    private var pendingHandoff: Handoff?
+    private var handoffCollapse = false
+    /// 引导分量（展开=宽度 / 收起=高度）段1 起点/目标值，tick 里按位移进度判定交接时机
+    private var handoffStartValue: CGFloat = 0
+    private var handoffLegTarget: CGFloat = 0
 
     init(panel: NotchPanel) {
         self.panel = panel
@@ -1211,14 +1778,38 @@ private final class NotchSpringAnimator {
     }
 
     /// 启动/重定向动画（只驱动窗口 frame）。必须主线程调用（setFrame）。
-    /// collapse = 收起方向（宽度弹簧加速，折回更利落）。
-    func animate(to targetFrame: NSRect, collapse: Bool = false, completion: (() -> Void)? = nil) {
+    /// collapse = 收起方向（宽度弹簧响应更快，折回更利落）。
+    /// handoff 非空时为两段连续动画：段1 用临界阻尼引导段调参弹向 targetFrame，
+    /// 引导分量进度达 handoff.progress 时无缝续接到交接目标（默认终点段调参）。
+    func animate(to targetFrame: NSRect, collapse: Bool = false,
+                 handoff: Handoff? = nil, completion: (() -> Void)? = nil) {
         guard let panel else { return }
         self.completion = nil // 被打断动画的收尾作废
+        pendingHandoff = nil
 
+        let tuning: [SpringTuning]
+        if handoff != nil {
+            tuning = collapse ? Self.stageOneCollapseTuning : Self.stageOneExpandTuning
+        } else {
+            tuning = collapse ? Self.collapseTuning : Self.expandTuning
+        }
+        rebuildSprings(target: targetFrame, tuning: tuning)
+
+        if let handoff {
+            pendingHandoff = handoff
+            handoffCollapse = collapse
+            handoffStartValue = collapse ? panel.frame.height : panel.frame.width
+            handoffLegTarget = collapse ? targetFrame.height : targetFrame.width
+        }
+        self.completion = completion
+        startTimerIfNeeded()
+    }
+
+    /// 以当前值/速度重建四分量弹簧（打断续接与 handoff 交接共用；不动 completion）
+    private func rebuildSprings(target: NSRect, tuning: [SpringTuning]) {
+        guard let panel else { return }
         let frame = panel.frame
         let previous = springs?.count == 4 ? springs : nil
-        let tuning = collapse ? Self.collapseTuning : Self.expandTuning
 
         func make(_ index: Int, _ initial: CGFloat, _ target: CGFloat) -> Spring {
             if let previous {
@@ -1234,12 +1825,11 @@ private final class NotchSpringAnimator {
         }
 
         springs = [
-            make(0, frame.minX, targetFrame.minX),
-            make(1, frame.minY, targetFrame.minY),
-            make(2, frame.width, targetFrame.width),
-            make(3, frame.height, targetFrame.height),
+            make(0, frame.midX, target.midX),
+            make(1, frame.maxY, target.maxY),
+            make(2, frame.width, target.width),
+            make(3, frame.height, target.height),
         ]
-        self.completion = completion
         startTimerIfNeeded()
     }
 
@@ -1274,8 +1864,24 @@ private final class NotchSpringAnimator {
             }
         }
         self.springs = springs
-        panel.setFrame(NSRect(x: springs[0].value, y: springs[1].value,
-                              width: springs[2].value, height: springs[3].value), display: true)
+        let width = springs[2].value
+        let height = springs[3].value
+        panel.setFrame(NSRect(x: springs[0].value - width / 2, y: springs[1].value - height,
+                              width: width, height: height), display: true)
+
+        // 中途交接：引导分量进度达阈值 → 立即以当前值/速度续接到交接目标（无停顿无回弹）
+        if let handoff = pendingHandoff {
+            let current = handoffCollapse ? springs[3].value : springs[2].value
+            let travel = handoffLegTarget - handoffStartValue
+            let progress = abs(travel) > 0.5 ? (current - handoffStartValue) / travel : 1
+            if progress >= handoff.progress {
+                pendingHandoff = nil
+                rebuildSprings(target: handoff.targetFrame,
+                               tuning: handoffCollapse ? Self.collapseTuning : Self.expandTuning)
+                return // 交接当帧弹簧已重建，不参与落定判定
+            }
+        }
+
         if allSettled {
             stopTimer()
             let completion = self.completion
@@ -1288,5 +1894,6 @@ private final class NotchSpringAnimator {
         timer?.invalidate()
         timer = nil
         springs = nil
+        pendingHandoff = nil
     }
 }
