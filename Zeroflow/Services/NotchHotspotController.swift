@@ -4,7 +4,7 @@ import Combine
 import CoreGraphics
 
 /// 灵动岛：悬停/单击刘海区域，弹出「更大的刘海」——顶边贴屏幕顶、水平居中于刘海、
-/// 尺寸 = 设置展开宽/高；一次显示一个内容模块（默认日历），刘海两侧顶部条内药丸切换。
+/// 尺寸随当前内容模块自适应；一次显示一个内容模块（默认日历），刘海两侧顶部条内药丸切换。
 /// 形状/动画细节见 NotchPanel 类文档。
 ///
 /// 实现要点（结构仿 `DockHoverPreviewController`）：
@@ -500,10 +500,8 @@ final class NotchHotspotController {
         lastPresented = (detected.screen, detected.hotspotTL, detected.notchTL)
         updateMonitors()
         startDayEventsRefit(model: viewModel)
-        lock.lock()
         // 用弹簧目标 frame，而非 present() 返回时刻的瞬时 frame（动画刚从刘海开始）
-        panelFrameTL = toTopLeftCoords(panel.targetFrame)
-        lock.unlock()
+        syncPanelFrame()
         if Self.debug {
             ZSLog("Notch: show gen=\(gen) hotspot=\(detected.hotspotTL) panel=\(panel.frame)")
         }
@@ -522,6 +520,7 @@ final class NotchHotspotController {
         guard module != selectedModule else { return }
         selectedModule = module
         panel?.switchModule(to: module)
+        syncPanelFrame()
         updateMonitors()
         if let model { startDayEventsRefit(model: model) }
     }
@@ -547,7 +546,7 @@ final class NotchHotspotController {
     }
 
     /// 日历模块显示中时订阅日程变化：日程异步加载完成 / 切换选中日期后重测内容布局
-    /// （面板尺寸固定，重测只为更新缩放/密度与卡片自然尺寸）
+    /// （面板尺寸随日程列表变化，refit 会弹簧变形并同步命中区域）
     private func startDayEventsRefit(model: NotchCalendarViewModel) {
         dayEventsCancellable = nil
         guard selectedModule == .calendar else { return }
@@ -556,13 +555,22 @@ final class NotchHotspotController {
             .sink { [weak self] _ in self?.refitPanel() }
     }
 
-    /// 重测内容：面板尺寸固定不变，只重建 contentView
+    /// 重测内容：尺寸随内容变化，重建 contentView 并同步命中区域
     private func refitPanel() {
         lock.lock()
         let visible = phase == .visible
         lock.unlock()
         guard visible, let panel, let model, lastPresented != nil else { return }
         panel.refit(model: model)
+        syncPanelFrame()
+    }
+
+    /// 面板尺寸变化后用弹簧目标 frame 更新保活/点击外部命中区域
+    private func syncPanelFrame() {
+        guard let panel else { return }
+        lock.lock()
+        panelFrameTL = toTopLeftCoords(panel.targetFrame)
+        lock.unlock()
     }
 
     // MARK: - 刘海探测（主线程）

@@ -136,3 +136,13 @@
 - **Pitfall:** 灵动岛面板的展开/收起弹簧把窗口 frame 当 x/y/width/height 四分量独立积分,过冲时 x/y 也在动(且 x 是左边界、y 是下边界),宽度/高度回弹表现为整个窗口一边平移一边变形,用户感知成「整窗回弹/晃动」,而不是「原地放大到 105% 再回弹到 100%」。
 - **Cause:** origin 是尺寸的函数(顶边中点固定时 x = centerX - w/2、y = topY - h);对 origin 和尺寸分别积弹簧等于把同一个几何约束拆成两个自由度过冲,二者相位/幅度不一致就产生整体位移。仅把 x/y 阻尼调大(0.90)也消不掉宽度过冲带来的边缘扫动。
 - **Prevention:** 位置分量改积「锚点」而非 origin(顶边贴屏幕顶的面板用 centerX/topY,锚点临界阻尼 ζ=1 零回弹),每帧用 `x = centerX - width/2`、`y = topY - height` 反推 frame;尺寸分量保留欠阻尼过冲,窗口就会围绕锚点左右/上下对称外扩再收回,位置全程不动。过冲幅度随交接初速变化,不能直接用 `exp(-πζ/√(1-ζ²))` 推算,应按实际分段交接逻辑跑数值模拟定阻尼比。参考 `NotchPanelView.swift` 的 `NotchSpringAnimator`。
+
+## DEV-028: 灵动岛「面板尺寸随内容自适应」时,测量口径必须与渲染口径一致
+- **Pitfall:** 面板尺寸由内容决定后,沿用旧的测量口径(资源卡传 `columnHeight` 把行拉伸到槽高、渲染端 `.frame(maxWidth: .infinity)` 拉伸列宽)会量出「槽高/槽宽」而不是自然尺寸,面板永远缩不回去;卡片 `contentHeight` 若按「不含内边距」传给渲染端,`padding → .frame(height:)` 会让内容比测量值少 20pt 被压扁。
+- **Cause:** 同一个 SwiftUI 视图在「测量」与「渲染」两条路径复用,列宽/列高/拉伸开关只是参数——测量时传值等于强制几何,不是「上限」;`.padding().frame(height:)` 的 frame 高度包含 padding。
+- **Prevention:** 自然尺寸测量不传拉伸参数(资源行测自然高、列宽用 `naturalColumnWidth(for:)`);渲染列宽取卡片内宽硬值,去掉 `maxWidth: .infinity`;卡片渲染顺序为 `内容 → .frame(height: contentHeight) → .scaleEffect(scale) → .frame(cardW, cardH) → .background(卡片底) → .frame(height: 槽高)`(background/外层 frame 在 scale 之后,缩放只作用于内容、背景始终是卡片框)。`contentHeight` 与测量值同为「含卡片内边距」,缩放系数 = `min(1, cardH / contentHeight)`,宽度方向只重排不缩放。面板宽高 = 卡片 + 内边距 + 顶部刘海条,只有屏幕边界(高 −80)兜底:`refit` 的比较项必须包含面板/卡片宽高与内容高,否则日程异步加载后尺寸不更新。参考 `NotchPanel.computeLayout` / `NotchContentView.renderedCard`。
+
+## DEV-029: 可见面板按内容改尺寸必须走弹簧,并同步控制器的命中区域
+- **Pitfall:** 面板尺寸随内容自适应后,切换模块 / 日程异步加载(refit)需要改窗口尺寸:若直接 `setFrame` 或只换 contentView 不改窗口,会出现尺寸瞬跳(DEV-023 的整块平移感)或内容与黑底不匹配;控制器缓存的 `panelFrameTL` 若不同步,「点击面板外收起 / 移出保活」仍按旧尺寸判定,窄面板外的大片区域会误收起或点不到。
+- **Cause:** `panelFrameTL` 只在 present 时写入;窗口尺寸的权威值在弹簧里逐帧变化,而命中判定使用弹簧终点 `targetFrame`。
+- **Prevention:** switchModule / refit 后统一走 `applyLayoutFrame`(重建 contentView + `springAnimator.animate(to: 新终 frame)`),并由控制器在调用后 `syncPanelFrame()` 用 `panel.targetFrame` 刷新 `panelFrameTL`;任何可见路径都不得直接 `setFrame`(仅窗口不可见时的首次展开定位可用)。参考 `NotchPanel.applyLayoutFrame` / `NotchHotspotController.syncPanelFrame`。

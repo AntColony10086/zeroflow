@@ -330,32 +330,10 @@ struct SettingsView: View {
                             set: { store.notchHoverDelayMs = Int($0) }
                         ), in: 100...1000, step: 50)
                     }
-                    VStack(alignment: .leading, spacing: 6) {
-                        LabeledContent(L10n.tr("展开宽度")) {
-                            Text("\(store.notchMaxWidth) pt")
-                                .monospacedDigit()
-                                .foregroundColor(.secondary)
-                        }
-                        Slider(value: Binding(
-                            get: { Double(store.notchMaxWidth) },
-                            set: { store.notchMaxWidth = Int($0) }
-                        ), in: 200...1200, step: 10)
-                    }
-                    VStack(alignment: .leading, spacing: 6) {
-                        LabeledContent(L10n.tr("展开高度")) {
-                            Text("\(store.notchMaxHeight) pt")
-                                .monospacedDigit()
-                                .foregroundColor(.secondary)
-                        }
-                        Slider(value: Binding(
-                            get: { Double(store.notchMaxHeight) },
-                            set: { store.notchMaxHeight = Int($0) }
-                        ), in: 100...1000, step: 20)
-                    }
                 } header: {
                     Text(L10n.tr("选项"))
                 } footer: {
-                    Text(L10n.tr("鼠标停留在刘海区域多久后弹出面板；单击刘海区域可立即弹出，移出后同样按此时长延迟收起。展开宽/高即弹出后的面板尺寸（内容显示在刘海下方）；内容超出面板时等比缩小或滚动。"))
+                    Text(L10n.tr("鼠标停留在刘海区域多久后弹出面板；单击刘海区域可立即弹出，移出后同样按此时长延迟收起。面板尺寸随当前显示内容自动调整。"))
                 }
 
                 Section {

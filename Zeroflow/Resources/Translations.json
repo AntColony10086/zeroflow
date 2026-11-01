@@ -609,21 +609,6 @@
     "en": "Items shown in the System Resources module; CPU/Memory/GPU show a usage bar (gray = total), while the curves beside Disk/Network show roughly the last minute of transfer rate.",
     "ja": "システムリソースモジュールに表示する項目。CPU/メモリ/GPU は使用率バー（灰色は全体量）を表示し、ディスク/ネットワークの数値の横の曲線は直近約 1 分の転送速度の推移です。"
   },
-  "展开宽度": {
-    "zh-Hans": "展开宽度",
-    "en": "Expanded Width",
-    "ja": "展開幅"
-  },
-  "展开高度": {
-    "zh-Hans": "展开高度",
-    "en": "Expanded Height",
-    "ja": "展開高さ"
-  },
-  "鼠标停留在刘海区域多久后弹出面板；单击刘海区域可立即弹出，移出后同样按此时长延迟收起。展开宽/高即弹出后的面板尺寸（内容显示在刘海下方）；内容超出面板时等比缩小或滚动。": {
-    "zh-Hans": "鼠标停留在刘海区域多久后弹出面板；单击刘海区域可立即弹出，移出后同样按此时长延迟收起。展开宽/高即弹出后的面板尺寸（内容显示在刘海下方）；内容超出面板时等比缩小或滚动。",
-    "en": "How long the pointer must stay on the notch before the panel appears; clicking the notch opens it instantly, and after the pointer leaves the panel collapses after the same delay. Expanded width/height is the panel's size once open (content sits below the notch); oversized content is scaled down or scrolled.",
-    "ja": "ホバーしてからパネルが表示されるまでの時間。ノッチをクリックすると即座に開き、ポインターが離れると同じ時間だけ待ってから収縮します。展開幅/高さが開いた後のパネルサイズです（内容はノッチの下に表示されます）。収まりきらない内容は等比縮小またはスクロールします。"
-  },
   "弹出面板中显示的内容模块，一次显示一个，可通过面板顶部刘海两侧的按钮切换（默认日历）。全部关闭时，面板仍会弹出并提示添加显示内容。": {
     "zh-Hans": "弹出面板中显示的内容模块，一次显示一个，可通过面板顶部刘海两侧的按钮切换（默认日历）。全部关闭时，面板仍会弹出并提示添加显示内容。",
     "en": "Content module shown in the panel, one at a time; switch with the buttons on either side of the notch at the top of the panel (calendar by default). With all modules off, the panel still opens and offers to add content.",
@@ -688,5 +673,10 @@
     "zh-Hans": "网络",
     "en": "Network",
     "ja": "ネットワーク"
+  },
+  "鼠标停留在刘海区域多久后弹出面板；单击刘海区域可立即弹出，移出后同样按此时长延迟收起。面板尺寸随当前显示内容自动调整。": {
+    "zh-Hans": "鼠标停留在刘海区域多久后弹出面板；单击刘海区域可立即弹出，移出后同样按此时长延迟收起。面板尺寸随当前显示内容自动调整。",
+    "en": "How long the pointer must stay on the notch before the panel appears; clicking the notch opens it instantly, and after the pointer leaves the panel collapses after the same delay. The panel size adapts to the content currently shown.",
+    "ja": "ホバーしてからパネルが表示されるまでの時間。ノッチをクリックすると即座に開き、ポインターが離れると同じ時間だけ待ってから収縮します。パネルのサイズは表示中の内容に合わせて自動調整されます。"
   }
 }
