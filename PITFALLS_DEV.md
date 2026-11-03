@@ -187,3 +187,8 @@
 - **Cause:** 液态玻璃是窗口级合成效果,必须整块铺满窗口底层;`contentView` 承载 SwiftUI 会经约束链反向钳制窗口尺寸。
 - **Prevention:** `contentView` 用普通 `NSView` 容器:先 `addSubview(glass)`(frame=bounds、autoresizingMask=[w,h]、`cornerRadius` 自己设),再 `addSubview(hosting)` 盖在上面(同样只用 autoresizing);不要给容器加 `masksToBounds`(会把玻璃/磨砂裁掉),圆角分别设在玻璃(`cornerRadius`)或磨砂(`layer.cornerRadius + masksToBounds`)上;外观、降低透明度、Liquid Glass 强度全交给系统原生玻璃,**不要**再叠 `tintColor`/不透明底/描边(会和系统效果打架、也看不出滑杆效果),也不要用 `alphaValue` 调玻璃透明度(会连内容一起透明)。
 
+
+## DEV-038: 自动隐藏 Dock 时 AX 报的是「隐藏位」坐标，Dock 预览的触发区/闸门会整体偏出屏幕
+- **Pitfall:** 开启 Dock 自动隐藏后，Dock 预览「偶尔能弹」:鼠标停在图标上大概率不弹,只有贴到屏幕最底一条缝才弹。日志里的 Dock 项缓存 bbox 是 `(410, 961, 588, 54)`,而屏幕只有 `1470×956` —— 整条落在屏幕底边之外。
+- **Cause:** Dock 自动隐藏时其 AX item/窗口的 position 是隐藏位(比展开位低一整条 Dock 高 ≈ 54pt),缓存重建若在隐藏期间发生就一直是这个坐标;触发区(`stripTriggerMargin=30`)与闸门(`stripGateMargin=16`)都以外扩后的条带判定,于是触发线从 `y≥872` 偏移到 `y≥931`、闸门从 `y≥886` 偏移到 `y≥945`,只剩屏幕最底 11pt 能过。再叠加「指针停住后不再有 mouseMoved + 展开动画期间 AX 命中返回桌面」,失败一次就再无重试机会。
+- **Prevention:** 条带几何一律先吸附到最近的屏幕边(横向排布贴底边、纵向排布贴左/右边,已落位时幂等)再外扩,不要直接相信 AX 的 position;闸门优先用「权威命中到的图标自身 frame」(实时)而非 Dock 整体条带;权威命中失败且指针仍在 Dock 区域、Dock 未落位(主窗口框 <95% 在屏内)时按 ~120ms/1.2s 短期重试,成功命中后把图标 frame 与缓存比对,不一致就置缓存失效重建。
