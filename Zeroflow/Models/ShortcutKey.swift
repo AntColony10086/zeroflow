@@ -14,6 +14,9 @@ struct ShortcutKey: Hashable {
     /// 窗口切换器备选快捷键：⌥`（Option + Tab 上方的「`」键，kVK_ANSI_Grave = 50）
     static let optionGraveDefault = ShortcutKey(character: "`", keyCode: 50, modifiers: [.option])
 
+    /// 剪贴板历史默认快捷键：⌘⇧C（kVK_ANSI_C = 8）
+    static let clipboardDefault = ShortcutKey(character: "c", keyCode: 8, modifiers: [.command, .shift])
+
     var isValid: Bool {
         !modifiers.isEmpty && !character.isEmpty
     }

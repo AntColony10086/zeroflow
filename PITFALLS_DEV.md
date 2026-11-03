@@ -171,3 +171,19 @@
 - **Pitfall:** 想在 `NotchShapeContainerView`(或面板视图)重写 `scrollWheel` 做双指左右切换,手指落在卡片(日历日程是 SwiftUI `ScrollView`)上时事件被 SwiftUI 先吃掉,容器收不到,表现为「滑卡片区域没反应、只有滑边缘才行」。
 - **Cause:** scrollWheel 先派发给指针命中的最深视图(SwiftUI hosting 内部的滚动区域),未被显式放行时不保证沿响应链回到自建容器;非激活面板也不成为 key,无法用键盘/焦点事件兜底。
 - **Prevention:** 用 `NSEvent.addLocalMonitorForEvents(matching: .scrollWheel)` 在 `NotchPanel` 里拦事件(`event.window === self` 且面板可见才处理),不消费原事件,纵向滚动/惯性(`momentumPhase != []`)原样放行;锁轴(累积位移 ≥12pt 且横向占优)后累积 ≥50pt 才切一张,并在手势结束前不再触发,避免一次滑动连翻多张。
+
+## DEV-035: 非激活面板要收键盘只能靠 `nonactivatingPanel` + `canBecomeKey = true`
+- **Pitfall:** 照搬灵动岛/Dock 预览的 `NSPanel`(`canBecomeKey = false`)做剪贴板面板:面板能显示、点击行也生效,但搜索框打不进字,↑↓/↵/esc 全无反应——键盘事件仍派给原前台 app。
+- **Cause:** `.nonactivatingPanel` 只表示「点击本窗口不激活 app」,并不让它成为 key window;`canBecomeKey = false` 时本 app 又没有全局事件 tap 转发按键(灵动岛/Dock 预览靠 listen-only CGEventTap 拿输入,剪贴板面板不装 tap),于是永远收不到键盘。
+- **Prevention:** 想「不激活 app 也能打字」,`styleMask` 用 `.borderless + .nonactivatingPanel`、`canBecomeKey = true`、`becomesKeyOnlyIfNeeded = false`,`makeKeyAndOrderFront` 后断言 `isKeyWindow == true`(本项目其余面板故意保持 false,别顺手改);兜底分支一旦 `NSApp.activate`,真的会抢走前台,必须记住 `previousApp` 并在收起/粘贴前 `NSRunningApplication.activate` 还原,否则合成 ⌘V 会打到自己身上;方向键/回车/esc 用 `NSEvent.addLocalMonitorForEvents(.keyDown)` 按 `event.window === panel` 拦截并吞掉,其余按键放行给 SwiftUI `TextField`(输入法搜索依赖它)。
+
+## DEV-036: 面板贴插入点弹出：AX 坐标是「主屏左上为原点」，且必须在面板成为 key 之前取
+- **Pitfall:** 用 `kAXFocusedUIElementAttribute` + `AXBoundsForRange` 拿 caret 矩形后直接当 Cocoa 坐标用,面板出现在屏幕另一半;或热键里先 `makeKeyAndOrderFront` 再取焦点,拿到的永远是面板自己的搜索框,锚点跑到面板上。
+- **Cause:** AX 的全屏坐标原点在主屏**左上角**(y 向下),Cocoa 原点在主屏**左下角**;非激活面板一旦成为 key window,系统焦点即转移,`AXFocusedUIElement` 变成我们的 `TextField`。
+- **Prevention:** 坐标换算 `cocoaY = NSScreen.screens[0].frame.maxY - axRect.maxY`,并用 `NSScreen.screens` 的 `frame.intersects` 判断落屏;取 caret 的时机固定在 `makeKeyAndOrderFront` **之前**,并用 `AXUIElementGetPid != 自己` 兜底跳过自身;`AXUIElementSetMessagingTimeout(0.25)` 防目标 app 卡死拖住热键;密码框(`AXSecureTextField`)直接放弃定位;拿不到 caret 时按「元素 frame → 鼠标位置」降级。
+
+## DEV-037: 液态玻璃作为窗口背景要放在 hosting 之下当兄弟视图，圆角各自设
+- **Pitfall:** 把 `NSGlassEffectView` 当 SwiftUI `.background` 或反过来把 hosting 塞进 `glass.contentView`,要么玻璃不出现(被宿主裁剪/不参与窗口背后采样),要么窗口宽高被 SwiftUI 固定 frame 钳死(DEV-024)。
+- **Cause:** 液态玻璃是窗口级合成效果,必须整块铺满窗口底层;`contentView` 承载 SwiftUI 会经约束链反向钳制窗口尺寸。
+- **Prevention:** `contentView` 用普通 `NSView` 容器:先 `addSubview(glass)`(frame=bounds、autoresizingMask=[w,h]、`cornerRadius` 自己设),再 `addSubview(hosting)` 盖在上面(同样只用 autoresizing);不要给容器加 `masksToBounds`(会把玻璃/磨砂裁掉),圆角分别设在玻璃(`cornerRadius`)或磨砂(`layer.cornerRadius + masksToBounds`)上;外观、降低透明度、Liquid Glass 强度全交给系统原生玻璃,**不要**再叠 `tintColor`/不透明底/描边(会和系统效果打架、也看不出滑杆效果),也不要用 `alphaValue` 调玻璃透明度(会连内容一起透明)。
+

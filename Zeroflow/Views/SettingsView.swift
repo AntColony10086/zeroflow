@@ -9,6 +9,7 @@ enum SettingsTab: String, CaseIterable {
     case switcher = "切换"
     case dock = "Dock"
     case dockPreview = "Dock 预览"
+    case clipboard = "剪贴板"
     case notch = "灵动岛"
     case finder = "右键菜单"
 
@@ -21,6 +22,7 @@ struct SettingsView: View {
 
     @StateObject private var store = SettingsStore.shared
     @State private var selectedTab: SettingsTab = .screenshot
+    @State private var showClearClipboardConfirmation = false
 
     var body: some View {
         HStack(spacing: 0) {
@@ -49,6 +51,8 @@ struct SettingsView: View {
                     dockTab
                 case .dockPreview:
                     dockPreviewTab
+                case .clipboard:
+                    clipboardTab
                 case .notch:
                     notchTab
                 case .finder:
@@ -282,6 +286,90 @@ struct SettingsView: View {
                         .foregroundColor(.secondary)
                 } header: {
                     Text(L10n.tr("屏幕录制权限"))
+                }
+            }
+        }
+        .formStyle(.grouped)
+    }
+
+    // MARK: - 剪贴板历史
+
+    private var clipboardTab: some View {
+        Form {
+            Section {
+                Toggle(L10n.tr("启用剪贴板历史"), isOn: $store.clipboardEnabled)
+            } header: {
+                Text(L10n.tr("启用"))
+            } footer: {
+                Text(L10n.tr("开启后，Zeroflow 会记录复制过的文本与图片，按快捷键可随时浏览、搜索并粘贴。关闭后停止记录，已有历史保留。"))
+            }
+
+            if store.clipboardEnabled {
+                Section {
+                    LabeledContent(L10n.tr("剪贴板快捷键")) {
+                        ShortcutRecorderView(
+                            shortcut: $store.clipboardShortcut,
+                            onSuspend: { GlobalHotkeyManager.shared.suspendClipboard() },
+                            onResume: { GlobalHotkeyManager.shared.resumeClipboard() },
+                            resetToDefault: { store.resetClipboardShortcutToDefault() }
+                        )
+                    }
+                } header: {
+                    Text(L10n.tr("快捷键"))
+                } footer: {
+                    Text(L10n.tr("在任意应用中按下该组合键，即在鼠标位置弹出历史面板。"))
+                }
+
+                Section {
+                    VStack(alignment: .leading, spacing: 6) {
+                        LabeledContent(L10n.tr("预览延迟")) {
+                            Text("\(store.clipboardPreviewDelayMs) ms")
+                                .monospacedDigit()
+                                .foregroundColor(.secondary)
+                        }
+                        Slider(value: Binding(
+                            get: { Double(store.clipboardPreviewDelayMs) },
+                            set: { store.clipboardPreviewDelayMs = Int($0) }
+                        ), in: 300...3000, step: 100)
+                    }
+                } header: {
+                    Text(L10n.tr("选项"))
+                } footer: {
+                    Text(L10n.tr("选中某条记录后停留多久，窗口向可用空间一侧展开并显示完整内容。"))
+                }
+
+                Section {
+                    LabeledContent(L10n.tr("最多保存条数")) {
+                        Stepper(value: $store.clipboardMaxItems, in: 10...1000, step: 10) {
+                            Text("\(store.clipboardMaxItems)")
+                                .monospacedDigit()
+                        }
+                        .fixedSize()
+                    }
+                    Button(L10n.tr("清空历史记录")) {
+                        showClearClipboardConfirmation = true
+                    }
+                } header: {
+                    Text(L10n.tr("历史"))
+                } footer: {
+                    Text(L10n.tr("文本与图片共用该上限，超出后自动删除最旧记录；图片保存在 ~/Library/Application Support/zeroflow/clipboard-images。密码管理器等标记为机密的剪贴板内容不会被记录。"))
+                }
+                .alert(L10n.tr("清空剪贴板历史？"), isPresented: $showClearClipboardConfirmation) {
+                    Button(L10n.tr("清空"), role: .destructive) {
+                        ClipboardHistoryStore.shared.clear()
+                    }
+                    Button(L10n.tr("取消"), role: .cancel) {}
+                } message: {
+                    Text(L10n.tr("将删除全部文本与图片记录，此操作不可撤销。"))
+                }
+
+                Section {
+                    AccessibilityPermissionRow(message: L10n.tr("需要「辅助功能」权限才能把选中内容自动粘贴到当前窗口"))
+                    Text(L10n.tr("未授权时，选中记录只会复制到剪贴板，仍需手动按 ⌘V。"))
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                } header: {
+                    Text(L10n.tr("权限"))
                 }
             }
         }

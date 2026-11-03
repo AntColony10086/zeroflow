@@ -37,6 +37,11 @@ final class SettingsStore: ObservableObject {
         static let notchShowResources = "notchShowResources"
         static let notchShowMusic = "notchShowMusic"
         static let notchResourceItems = "notchResourceItems"
+        static let clipboardEnabled = "clipboardEnabled"
+        static let clipboardShortcutKeyCode = "clipboardShortcut.keyCode"
+        static let clipboardShortcutModifiers = "clipboardShortcut.modifiers"
+        static let clipboardPreviewDelayMs = "clipboardPreviewDelayMs"
+        static let clipboardMaxItems = "clipboardMaxItems"
     }
 
     private let defaults: UserDefaults
@@ -113,6 +118,11 @@ final class SettingsStore: ObservableObject {
             Keys.notchShowResources: false,
             Keys.notchShowMusic: false,
             Keys.notchResourceItems: NotchResourceItem.allRawValues,
+            Keys.clipboardEnabled: false,
+            Keys.clipboardShortcutKeyCode: Int(ShortcutKey.clipboardDefault.keyCode),
+            Keys.clipboardShortcutModifiers: Int(ShortcutKey.clipboardDefault.modifiers.rawValue),
+            Keys.clipboardPreviewDelayMs: 1000,
+            Keys.clipboardMaxItems: 100,
         ])
         _launchAtLogin = Published(initialValue: defaults.bool(forKey: Keys.launchAtLogin))
         _saveDirectory = Published(initialValue: defaults.string(forKey: Keys.saveDirectory) ?? Self.defaultSaveDirectory)
@@ -139,6 +149,10 @@ final class SettingsStore: ObservableObject {
         }())
         _shortcut = Published(initialValue: Self.loadShortcut(from: defaults))
         _cmdTabShortcut = Published(initialValue: Self.loadCmdTabShortcut(from: defaults))
+        _clipboardShortcut = Published(initialValue: Self.loadClipboardShortcut(from: defaults))
+        _clipboardEnabled = Published(initialValue: defaults.bool(forKey: Keys.clipboardEnabled))
+        _clipboardPreviewDelayMs = Published(initialValue: defaults.integer(forKey: Keys.clipboardPreviewDelayMs))
+        _clipboardMaxItems = Published(initialValue: defaults.integer(forKey: Keys.clipboardMaxItems))
         _appLanguage = Published(initialValue: AppLanguage(rawValue: defaults.string(forKey: Keys.appLanguage) ?? "") ?? .system)
         ensureDefaultDirectoryExists()
         // 用本次加载的真实值补齐 group container 共享文件（didSet 只在变更时触发）
@@ -191,6 +205,15 @@ final class SettingsStore: ObservableObject {
         case ShortcutKey.optionGraveDefault.keyCode: return .optionGraveDefault
         default: return .cmdTabDefault
         }
+    }
+
+    private static func loadClipboardShortcut(from defaults: UserDefaults) -> ShortcutKey {
+        loadShortcut(from: defaults,
+                     keyCodeKey: Keys.clipboardShortcutKeyCode,
+                     modifiersKey: Keys.clipboardShortcutModifiers,
+                     defaultKeyCode: ShortcutKey.clipboardDefault.keyCode,
+                     defaultModifiers: UInt(ShortcutKey.clipboardDefault.modifiers.rawValue),
+                     defaultCharacter: ShortcutKey.clipboardDefault.character)
     }
 
     private static func loadShortcut(from defaults: UserDefaults,
@@ -474,6 +497,46 @@ final class SettingsStore: ObservableObject {
         }
     }
 
+    // MARK: - 剪贴板历史
+
+    @Published var clipboardEnabled: Bool {
+        didSet {
+            defaults.set(clipboardEnabled, forKey: Keys.clipboardEnabled)
+            NotificationCenter.default.post(
+                name: ClipboardMonitor.didChangeNotification,
+                object: nil,
+                userInfo: ["enabled": clipboardEnabled]
+            )
+        }
+    }
+
+    @Published var clipboardShortcut: ShortcutKey {
+        didSet {
+            defaults.set(Int(clipboardShortcut.keyCode), forKey: Keys.clipboardShortcutKeyCode)
+            defaults.set(Int(clipboardShortcut.modifiers.rawValue), forKey: Keys.clipboardShortcutModifiers)
+            NotificationCenter.default.post(
+                name: GlobalHotkeyManager.clipboardShortcutDidChangeNotification,
+                object: nil,
+                userInfo: ["shortcut": clipboardShortcut]
+            )
+        }
+    }
+
+    /// 选中某条记录后停留多久展开完整预览（毫秒）
+    @Published var clipboardPreviewDelayMs: Int {
+        didSet {
+            defaults.set(clipboardPreviewDelayMs, forKey: Keys.clipboardPreviewDelayMs)
+        }
+    }
+
+    /// 最多保存条数（文本与图片共用，裁剪时删图片文件）
+    @Published var clipboardMaxItems: Int {
+        didSet {
+            defaults.set(clipboardMaxItems, forKey: Keys.clipboardMaxItems)
+            ClipboardHistoryStore.shared.trimToLimit()
+        }
+    }
+
     // MARK: - 语言
 
     @Published var appLanguage: AppLanguage {
@@ -507,5 +570,9 @@ final class SettingsStore: ObservableObject {
 
     func resetShortcutToDefault() {
         shortcut = .standard
+    }
+
+    func resetClipboardShortcutToDefault() {
+        clipboardShortcut = .clipboardDefault
     }
 }
