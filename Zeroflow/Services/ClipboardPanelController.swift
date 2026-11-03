@@ -165,6 +165,7 @@ final class ClipboardPanelController: NSObject, NSWindowDelegate {
         guard let model else { return }
         ZSLog("clipboard: query changed, len=\(model.query.count)")
         model.selectedIndex = 0
+        model.selectionFromPointer = false
         // 搜索变化只重算列表，不自动展开预览：展开必须由用户停留/移动选择触发
         pendingPreview?.cancel()
         pendingPreview = nil
@@ -178,6 +179,7 @@ final class ClipboardPanelController: NSObject, NSWindowDelegate {
     private func hover(_ index: Int) {
         guard let model, index != model.selectedIndex else { return }
         ZSLog("clipboard: hover row \(index)")
+        model.selectionFromPointer = true
         model.selectedIndex = index
         schedulePreview()
     }
@@ -192,6 +194,7 @@ final class ClipboardPanelController: NSObject, NSWindowDelegate {
         guard let model else { return }
         let count = model.filteredItems.count
         guard count > 0 else { return }
+        model.selectionFromPointer = false
         model.selectedIndex = (model.selectedIndex + step + count) % count
         schedulePreview()
     }
@@ -358,6 +361,7 @@ final class ClipboardPanelController: NSObject, NSWindowDelegate {
         var height = ClipboardPanelMetrics.height(for: model.filteredItems.count)
         height = min(height, visible.height - 16)
         let previewing = model.previewItem != nil
+        model.previewOnLeft = previewSide == .left
         let expandedWidth = ClipboardPanelMetrics.listWidth + ClipboardPanelMetrics.dividerWidth
             + ClipboardPanelMetrics.previewWidth
         let width = previewing ? expandedWidth : ClipboardPanelMetrics.listWidth

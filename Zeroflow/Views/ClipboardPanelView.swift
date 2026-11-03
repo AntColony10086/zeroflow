@@ -27,6 +27,8 @@ final class ClipboardViewModel: ObservableObject {
     @Published var query = ""
     @Published var selectedIndex = 0
     @Published var previewItem: ClipboardItem?
+    @Published var previewOnLeft = false
+    @Published var selectionFromPointer = false
 
     private static let timeFormatter: DateFormatter = {
         let formatter = DateFormatter()
@@ -94,16 +96,24 @@ struct ClipboardPanelView: View {
 
     var body: some View {
         HStack(spacing: 0) {
+            if model.previewItem != nil && model.previewOnLeft {
+                previewColumn
+                dividerLine
+            }
             listColumn
-            if model.previewItem != nil {
-                Rectangle()
-                    .fill(Color.primary.opacity(0.1))
-                    .frame(width: ClipboardPanelMetrics.dividerWidth)
+            if model.previewItem != nil && !model.previewOnLeft {
+                dividerLine
                 previewColumn
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         .clipShape(RoundedRectangle(cornerRadius: ClipboardPanelMetrics.cornerRadius, style: .continuous))
+    }
+
+    private var dividerLine: some View {
+        Rectangle()
+            .fill(Color.primary.opacity(0.1))
+            .frame(width: ClipboardPanelMetrics.dividerWidth)
     }
 
     // MARK: - 列表
@@ -167,11 +177,14 @@ struct ClipboardPanelView: View {
                 .padding(.vertical, 4)
             }
             .onChange(of: model.selectedIndex) { _ in
+                // 鼠标 hover 引起的选中变化不滚动，避免列表在光标下跑掉
+                guard !model.selectionFromPointer else { return }
                 let list = model.filteredItems
                 let index = model.selectedIndex
                 guard index >= 0, index < list.count else { return }
                 withAnimation(.easeOut(duration: 0.12)) {
-                    proxy.scrollTo(list[index].id, anchor: .center)
+                    // 不传 anchor = 最小滚动：选中项已可见时不动，越出可视区才滚
+                    proxy.scrollTo(list[index].id)
                 }
             }
         }
@@ -197,7 +210,7 @@ struct ClipboardPanelView: View {
         .frame(height: ClipboardPanelMetrics.rowHeight - 2)
         .background(
             RoundedRectangle(cornerRadius: 7, style: .continuous)
-                .fill(selected ? Color(nsColor: .selectedContentBackgroundColor).opacity(0.55) : Color.clear)
+                .fill(selected ? Color(nsColor: .selectedContentBackgroundColor) : Color.clear)
         )
         .contentShape(Rectangle())
         .onHover { hovering in
@@ -323,14 +336,12 @@ struct ClipboardPanelView: View {
             }
         case .image:
             if let image = ClipboardHistoryStore.shared.image(for: item) {
-                ScrollView([.vertical, .horizontal], showsIndicators: true) {
-                    Image(nsImage: image)
-                        .resizable()
-                        .aspectRatio(contentMode: .fit)
-                        .frame(maxWidth: ClipboardPanelMetrics.previewWidth - 24,
-                               maxHeight: CGFloat(ClipboardPanelMetrics.rows(for: model.filteredItems.count)) * ClipboardPanelMetrics.rowHeight + 4)
-                        .padding(12)
-                }
+                Image(nsImage: image)
+                    .resizable()
+                    .interpolation(.high)
+                    .aspectRatio(contentMode: .fit)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .padding(12)
             } else {
                 Text(L10n.tr("图片已不可用"))
                     .font(.caption)
