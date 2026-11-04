@@ -7,6 +7,12 @@ extension Notification.Name {
     static let zeroflowFinderNewFileDidChange = Notification.Name("zeroflow.finderNewFileDidChange")
 }
 
+/// 灵动岛触发方式：悬停刘海弹出（移出延时收起） / 单击刘海弹出（点击刘海以外收起）
+enum NotchTriggerMode: String, CaseIterable {
+    case hover
+    case click
+}
+
 /// 设置持久化存储。M0 只负责存取，不接入真实全局热键。
 final class SettingsStore: ObservableObject {
     static let shared = SettingsStore()
@@ -33,6 +39,7 @@ final class SettingsStore: ObservableObject {
         static let finderCmdCommand = "finderCmdCommand"
         static let notchEnabled = "notchEnabled"
         static let notchHoverDelayMs = "notchHoverDelayMs"
+        static let notchTriggerMode = "notchTriggerMode"
         static let notchShowCalendar = "notchShowCalendar"
         static let notchShowResources = "notchShowResources"
         static let notchShowMusic = "notchShowMusic"
@@ -114,6 +121,7 @@ final class SettingsStore: ObservableObject {
             Keys.finderCmdCommand: Self.defaultFinderCmdCommand,
             Keys.notchEnabled: false,
             Keys.notchHoverDelayMs: 200,
+            Keys.notchTriggerMode: NotchTriggerMode.click.rawValue,
             Keys.notchShowCalendar: true,
             Keys.notchShowResources: false,
             Keys.notchShowMusic: false,
@@ -140,6 +148,7 @@ final class SettingsStore: ObservableObject {
         _finderCmdCommand = Published(initialValue: defaults.string(forKey: Keys.finderCmdCommand) ?? Self.defaultFinderCmdCommand)
         _notchEnabled = Published(initialValue: defaults.bool(forKey: Keys.notchEnabled))
         _notchHoverDelayMs = Published(initialValue: defaults.integer(forKey: Keys.notchHoverDelayMs))
+        _notchTriggerMode = Published(initialValue: NotchTriggerMode(rawValue: defaults.string(forKey: Keys.notchTriggerMode) ?? "") ?? .click)
         _notchShowCalendar = Published(initialValue: defaults.bool(forKey: Keys.notchShowCalendar))
         _notchShowResources = Published(initialValue: defaults.bool(forKey: Keys.notchShowResources))
         _notchShowMusic = Published(initialValue: defaults.bool(forKey: Keys.notchShowMusic))
@@ -450,10 +459,17 @@ final class SettingsStore: ObservableObject {
         }
     }
 
-    /// 悬停刘海多久后弹出面板（毫秒）；单击刘海可立即弹出
+    /// 悬停刘海多久后弹出面板（毫秒）；单击刘海可立即弹出。单击触发模式下不生效
     @Published var notchHoverDelayMs: Int {
         didSet {
             defaults.set(notchHoverDelayMs, forKey: Keys.notchHoverDelayMs)
+        }
+    }
+
+    /// 触发方式：悬停 / 单击。改动即时生效，已弹出的面板保持当前状态直到下次交互
+    @Published var notchTriggerMode: NotchTriggerMode {
+        didSet {
+            defaults.set(notchTriggerMode.rawValue, forKey: Keys.notchTriggerMode)
         }
     }
 

@@ -402,26 +402,37 @@ struct SettingsView: View {
             } header: {
                 Text(L10n.tr("启用"))
             } footer: {
-                Text(L10n.tr("鼠标悬停或单击屏幕顶部刘海区域，刘海扩大并显示内容模块；点击面板外部或按 Esc 收起。仅支持带刘海的机型。"))
+                Text(L10n.tr("悬停或单击屏幕顶部刘海区域（可在下方选择触发方式），刘海扩大并显示内容模块；点击面板外部或按 Esc 收起。仅支持带刘海的机型。"))
             }
 
             if store.notchEnabled {
                 Section {
-                    VStack(alignment: .leading, spacing: 6) {
-                        LabeledContent(L10n.tr("悬停延时")) {
-                            Text("\(store.notchHoverDelayMs) ms")
-                                .monospacedDigit()
-                                .foregroundColor(.secondary)
+                    Picker(L10n.tr("触发方式"), selection: $store.notchTriggerMode) {
+                        ForEach(NotchTriggerMode.allCases, id: \.self) { mode in
+                            Text(mode == .hover ? L10n.tr("悬停") : L10n.tr("点击")).tag(mode)
                         }
-                        Slider(value: Binding(
-                            get: { Double(store.notchHoverDelayMs) },
-                            set: { store.notchHoverDelayMs = Int($0) }
-                        ), in: 100...1000, step: 50)
+                    }
+                    .pickerStyle(.segmented)
+
+                    if store.notchTriggerMode == .hover {
+                        VStack(alignment: .leading, spacing: 6) {
+                            LabeledContent(L10n.tr("悬停延时")) {
+                                Text("\(store.notchHoverDelayMs) ms")
+                                    .monospacedDigit()
+                                    .foregroundColor(.secondary)
+                            }
+                            Slider(value: Binding(
+                                get: { Double(store.notchHoverDelayMs) },
+                                set: { store.notchHoverDelayMs = Int($0) }
+                            ), in: 100...1000, step: 50)
+                        }
                     }
                 } header: {
                     Text(L10n.tr("选项"))
                 } footer: {
-                    Text(L10n.tr("鼠标停留在刘海区域多久后弹出面板；单击刘海区域可立即弹出，移出后同样按此时长延迟收起。面板尺寸随当前显示内容自动调整。"))
+                    Text(store.notchTriggerMode == .hover
+                         ? L10n.tr("鼠标停留在刘海区域多久后弹出面板；单击刘海区域可立即弹出，移出后同样按此时长延迟收起。面板尺寸随当前显示内容自动调整。")
+                         : L10n.tr("单击刘海区域弹出面板，鼠标移出不会收起；单击面板和刘海以外的区域收起。面板尺寸随当前显示内容自动调整。"))
                 }
 
                 Section {

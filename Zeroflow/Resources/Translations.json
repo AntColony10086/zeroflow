@@ -529,10 +529,30 @@
     "en": "Enable Notch Panel",
     "ja": "ノッチパネルを有効にする"
   },
-  "鼠标悬停或单击屏幕顶部刘海区域，刘海扩大并显示内容模块；点击面板外部或按 Esc 收起。仅支持带刘海的机型。": {
-    "zh-Hans": "鼠标悬停或单击屏幕顶部刘海区域，刘海扩大并显示内容模块；点击面板外部或按 Esc 收起。仅支持带刘海的机型。",
-    "en": "Hover over or click the notch at the top of the screen to expand it and show a content module; click outside the panel or press Esc to dismiss. Only works on Macs with a notch.",
-    "ja": "画面上部のノッチにカーソルを合わせるかクリックすると、ノッチが拡大してコンテンツモジュールを表示します。パネルの外側をクリックするか Esc で閉じます。ノッチ搭載機種のみ対応。"
+  "触发方式": {
+    "zh-Hans": "触发方式",
+    "en": "Trigger",
+    "ja": "トリガー"
+  },
+  "悬停": {
+    "zh-Hans": "悬停",
+    "en": "Hover",
+    "ja": "ホバー"
+  },
+  "点击": {
+    "zh-Hans": "点击",
+    "en": "Click",
+    "ja": "クリック"
+  },
+  "悬停或单击屏幕顶部刘海区域（可在下方选择触发方式），刘海扩大并显示内容模块；点击面板外部或按 Esc 收起。仅支持带刘海的机型。": {
+    "zh-Hans": "悬停或单击屏幕顶部刘海区域（可在下方选择触发方式），刘海扩大并显示内容模块；点击面板外部或按 Esc 收起。仅支持带刘海的机型。",
+    "en": "Hover over or click the notch at the top of the screen (trigger can be chosen below) to expand it and show a content module; click outside the panel or press Esc to dismiss. Only works on Macs with a notch.",
+    "ja": "画面上部のノッチにカーソルを合わせるかクリックすると（トリガーは下で選択できます）、ノッチが拡大してコンテンツモジュールを表示します。パネルの外側をクリックするか Esc で閉じます。ノッチ搭載機種のみ対応。"
+  },
+  "单击刘海区域弹出面板，鼠标移出不会收起；单击面板和刘海以外的区域收起。面板尺寸随当前显示内容自动调整。": {
+    "zh-Hans": "单击刘海区域弹出面板，鼠标移出不会收起；单击面板和刘海以外的区域收起。面板尺寸随当前显示内容自动调整。",
+    "en": "Click the notch to open the panel; moving the mouse away does not dismiss it — click anywhere outside the panel and notch to dismiss. Panel size follows the displayed content.",
+    "ja": "ノッチをクリックするとパネルを表示します。マウスを外しても閉じず、パネルとノッチ以外の場所をクリックすると閉じます。パネルの大きさは表示内容に合わせて自動調整されます。"
   },
   "显示内容": {
     "zh-Hans": "显示内容",
