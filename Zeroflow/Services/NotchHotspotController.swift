@@ -27,6 +27,9 @@ final class NotchHotspotController {
 
     private static let debug = ProcessInfo.processInfo.environment["ZEROFLOW_NOTCH_DEBUG"] == "1"
     private static let fakeNotch = ProcessInfo.processInfo.environment["ZEROFLOW_NOTCH_FAKE"] == "1"
+    /// `ZEROFLOW_NOTCH_SHOW=1`：启动 1.5s 后直接弹出面板（绕过悬停，调动画用）；
+    /// 该模式下指针移出不会自动收起（否则鼠标一动面板就没了），Esc / 区域外点击仍可收起
+    private static let autoShow = ProcessInfo.processInfo.environment["ZEROFLOW_NOTCH_SHOW"] == "1"
 
     /// 热区对刘海的左右外扩
     private static let hotspotMargin: CGFloat = 12
@@ -131,6 +134,14 @@ final class NotchHotspotController {
         thread = t
         t.start()
         ZSLog("Notch: started")
+
+        if Self.autoShow {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { [weak self] in
+                guard let self, self.isRunning else { return }
+                ZSLog("Notch: auto show (ZEROFLOW_NOTCH_SHOW)")
+                self.openNow()
+            }
+        }
     }
 
     private func stop() {
@@ -267,6 +278,7 @@ final class NotchHotspotController {
     // MARK: - 状态机（tap 线程决策，workQueue/主线程执行）
 
     private func handleMouseMoved(_ point: CGPoint) {
+        guard !Self.autoShow else { return }
         lock.lock()
         let now = CFAbsoluteTimeGetCurrent()
         if now - lastMoveProcessedAt < Self.moveThrottle {

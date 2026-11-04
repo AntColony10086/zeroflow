@@ -1150,16 +1150,17 @@ private struct ResourceSparkline: View {
 /// 模块切换有两路：顶部条左上角的箭头按钮（面板最小宽度保证它们不被刘海挡住），
 /// 以及面板范围内的双指左右滑动
 /// （local monitor 收 scrollWheel，锁横轴累积超阈值切一张；循环切换，单模块时箭头置灰）。
-/// 动画（NotchSpringAnimator 只驱动 frame，全程不透明：形状渐变本身就是全部视觉效果，
-/// 无透明度渐变，DEV-022）：
-/// - 展开两段连续：段1 横向拉到 80% 终宽（临界阻尼无回弹，高度停在迷你刘海高）→
-///   引导分量进度达 handoffProgress 时以当前值/速度无缝续接段2 纵向+剩余横向
-///   （无停顿，视觉上是一段连续运动，仅终点一次过冲：宽/高均达 ~105% 再回弹到 100%）；
+/// 动画（NotchSpringAnimator 只驱动「形状状态」与窗口 frame，黑底全程不透明：形状渐变
+/// 本身就是全部视觉效果，DEV-022）：
+/// - 展开 = 单段弹簧（iOS 灵动岛式「液体铺开」）：宽高同时起跳、宽度领先、高度慢半拍——
+///   面板先横向铺满、底缘跟着坠到底，收尾各带一次小幅过冲（宽 ≈3%、高 ≈1%）后回落；
+///   全程没有中途换道、没有回缩、没有停顿，≈0.45s 落定；
 /// - 位置以最终窗口的顶边中点（centerX/topY）为锚点，尺寸过冲时左右/上下对称外扩，
 ///   窗口整体不发生平移（DEV-027）；
-/// - 收起镜像两段：段1 高度收到刘海高（临界阻尼）→ 无缝续接段2 横向收拢回迷你刘海
-///   → 动画结束才 orderOut；
-/// - 打断续接（DEV-023）：弹簧以当前值/速度重定向，在途 handoff/completion 作废。
+/// - 内容视图（hosting）从全透明淡入，透明度由展开的几何进度驱动（宽度行程 60% 即完全
+///   不透明，≈0.1s）；黑底形状始终不透明，所以起手就能看到内容随形状一起长出来；
+/// - 收起 = 单段弹簧（临界阻尼）：三宽 + 高度同时收回迷你刘海，动画结束才 orderOut；
+/// - 打断续接（DEV-023）：弹簧以当前值/速度重定向，在途 completion 作废。
 /// 起点/收起终点的迷你刘海 = 比真刘海小一圈（顶边贴屏幕顶、左右/底各内缩），
 /// 完全藏在刘海硬件后不可见。
 final class NotchPanel: NSPanel {
@@ -1168,13 +1169,13 @@ final class NotchPanel: NSPanel {
     static let cornerBase: CGFloat = 7
     /// 迷你刘海相对真刘海的内缩（左右/底部；顶边贴屏幕顶）
     static let startInset: CGFloat = 6
-    /// 段1 横向目标宽度比例（终宽的 80%），到位前以 handoff 无缝续接剩余横向+纵向
-    static let stageOneWidthFraction: CGFloat = 0.8
-    /// 段1 引导分量（展开=宽度/收起=高度）位移进度达到该比例即交接下一段
-    static let handoffProgress: CGFloat = 0.85
     /// 顶部条箭头与刘海硬件之间的最小间距（决定面板最小宽度）
     private static let arrowNotchClearance: CGFloat = 4
     private lazy var springAnimator = NotchSpringAnimator(panel: self)
+    /// 当前内容的形状遮罩容器（makeContentView 更新；弹簧每帧给它换形状参数）
+    private weak var shapeContainer: NotchShapeContainerView?
+    /// 内容视图（展开时按几何进度淡入的对象）
+    private weak var contentHosting: NSView?
     /// 弹簧正在趋向的目标 frame（present/dismiss 更新）。
     /// 控制器保活/点击判定用这个，而不是 present() 返回时刻的瞬时 frame：
     /// 展开动画从迷你刘海开始，那一刻的真实 frame 还是迷你大小（DEV-024 修复后
@@ -1359,7 +1360,7 @@ final class NotchPanel: NSPanel {
 
     /// 悬停延时到期 / 单击热区后展示：顶边贴屏幕顶、水平居中于刘海、尺寸由内容决定。
     /// 每次 present 重建 contentView（模型重置到今天，同时取最新内容设置）。
-    /// 两段连续展开见类文档；打断续接走 isVisible 分支单段重定向。
+    /// 展开走单段液体弹簧（见类文档）；打断续接走 isVisible 分支单段重定向。
     func present(hotspotTL: CGRect, notchTL: CGRect, screen: NSScreen,
                  model: NotchCalendarViewModel, module: NotchContentView.Module?,
                  onNavigateModule: @escaping (Int) -> Void) {
@@ -1380,47 +1381,31 @@ final class NotchPanel: NSPanel {
         let unionMaxY = NSScreen.screens.reduce(CGRect.null) { $0.union($1.frame) }.maxY
         let finalFrame = Self.expandedFrame(notchTL: notchTL, screen: screen, layout: layout, unionMaxY: unionMaxY)
         targetFrame = finalFrame
+        let finalState = NotchShapeState.full(frame: finalFrame)
         if isVisible {
-            // 收起动画被打断（快速反复进出）：从当前 frame/速度单段重定向到终点
+            // 收起动画被打断（快速反复进出）/ 可见时改尺寸：从当前形状单段重定向到终形态
             invalidateShadow()
-            springAnimator.animate(to: finalFrame)
+            springAnimator.animate(to: finalState, contentAlpha: 1)
         } else {
-            let startFrame = Self.miniNotchFrame(notchTL: notchTL, unionMaxY: unionMaxY)
-            setFrame(startFrame, display: false)
+            let startState = Self.miniState(notchTL: notchTL, unionMaxY: unionMaxY)
+            apply(startState, display: false)
+            applyContentAlpha(0)
             alphaValue = 1
             orderFront(nil)
             invalidateShadow()
-            // 两段连续（中途不停顿、无中间回弹，全程不透明 DEV-022）：段1 横向拉到
-            // 80% 终宽（临界阻尼，高度停在迷你刘海高）→ 宽度进度达 handoffProgress
-            // 时以当前值/速度无缝续接段2 纵向+剩余横向（仅终点一次过冲）。
-            // 面板较窄（80% 终宽 ≤ 迷你刘海宽）时无横向段，直接单段展开
-            let stageOneWidth = finalFrame.width * Self.stageOneWidthFraction
-            if stageOneWidth > startFrame.width + 1 {
-                let stageOne = NSRect(x: notchTL.midX - stageOneWidth / 2,
-                                      y: unionMaxY - startFrame.height,
-                                      width: stageOneWidth, height: startFrame.height)
-                springAnimator.animate(to: stageOne,
-                                       handoff: .init(targetFrame: finalFrame,
-                                                      progress: Self.handoffProgress))
-            } else {
-                springAnimator.animate(to: finalFrame)
-            }
+            springAnimator.animate(to: finalState, contentAlpha: 1)
         }
     }
 
-    /// 收起（镜像展开的两段连续弹簧）：段1 高度收到刘海高（临界阻尼无回弹、宽度不动）→
-    /// 进度达 handoffProgress 时无缝续接段2 横向收拢回迷你刘海，动画结束才 orderOut。
-    /// 全程不透明。控制器状态在 hidePanel 即时更新，期间再 present 会以单段重定向
-    /// 无缝续接展开（在途 handoff/completion 作废，orderOut 不会执行）。
+    /// 收起：单段弹簧（宽度领先收拢、高度跟上，三宽 + 高同时缩回迷你刘海），
+    /// 动画结束才 orderOut，全程不透明。控制器状态在 hidePanel 即时更新，期间再 present
+    /// 会以单段重定向无缝续接展开（在途 completion 作废，orderOut 不会执行）。
     func dismiss(notchTL: CGRect) {
         let unionMaxY = NSScreen.screens.reduce(CGRect.null) { $0.union($1.frame) }.maxY
-        let notchFrame = Self.miniNotchFrame(notchTL: notchTL, unionMaxY: unionMaxY)
-        targetFrame = notchFrame
-        let stageOne = NSRect(x: frame.midX - frame.width / 2, y: unionMaxY - notchFrame.height,
-                              width: frame.width, height: notchFrame.height)
-        springAnimator.animate(to: stageOne, collapse: true,
-                               handoff: .init(targetFrame: notchFrame,
-                                              progress: Self.handoffProgress)) { [weak self] in
+        let notchState = Self.miniState(notchTL: notchTL, unionMaxY: unionMaxY)
+        targetFrame = notchState.frame
+        springAnimator.animate(to: notchState, tuning: NotchSpringAnimator.collapseTuning,
+                               lead: 2) { [weak self] in
             self?.orderOut(nil)
         }
     }
@@ -1433,13 +1418,13 @@ final class NotchPanel: NSPanel {
         return NSRect(x: x, y: unionMaxY - layout.height, width: layout.width, height: layout.height)
     }
 
-    /// 迷你刘海：顶边贴屏幕顶、左右各收 startInset、底部收 startInset
+    /// 迷你刘海形状：顶边贴屏幕顶、左右各收 startInset、底部收 startInset
     /// （比真刘海小一圈，完全藏在刘海硬件后不可见）
-    private static func miniNotchFrame(notchTL: CGRect, unionMaxY: CGFloat) -> NSRect {
-        NSRect(x: notchTL.midX - (notchTL.width - startInset * 2) / 2,
-               y: unionMaxY - notchTL.height + startInset,
-               width: notchTL.width - startInset * 2,
-               height: notchTL.height - startInset)
+    private static func miniState(notchTL: CGRect, unionMaxY: CGFloat) -> NotchShapeState {
+        let width = max(4, notchTL.width - startInset * 2)
+        let height = max(4, notchTL.height - startInset)
+        return NotchShapeState(centerX: notchTL.midX, topY: unionMaxY,
+                               topWidth: width, neckWidth: width, bottomWidth: width, height: height)
     }
 
     /// 切换模块（左右箭头 / 双指左右滑动）：面板尺寸按新模块内容弹簧变形，并重建 contentView
@@ -1477,11 +1462,30 @@ final class NotchPanel: NSPanel {
         let frame = Self.expandedFrame(notchTL: lastNotchTL, screen: screen,
                                        layout: layout, unionMaxY: unionMaxY)
         targetFrame = frame
+        let state = NotchShapeState.full(frame: frame)
         guard isVisible else {
-            setFrame(frame, display: false)
+            apply(state, display: false)
+            applyContentAlpha(1)
             return
         }
-        springAnimator.animate(to: frame)
+        springAnimator.animate(to: state, contentAlpha: 1)
+    }
+
+    // MARK: - 形状应用（弹簧每帧调用）
+
+    /// 应用一帧形状：窗口 frame = 形状包围盒，遮罩容器换顶栏/细颈/鼓包三条外包络宽
+    fileprivate func apply(_ state: NotchShapeState, display: Bool) {
+        setFrame(state.frame, display: display)
+        shapeContainer?.applyProfile(topWidth: state.topWidth, neckWidth: state.neckWidth,
+                                     bottomWidth: state.bottomWidth)
+    }
+
+    /// 内容视图当前透明度（弹簧段内过渡的起点）
+    fileprivate var contentAlpha: CGFloat { contentHosting?.alphaValue ?? 1 }
+
+    /// 内容视图透明度：只作用在 hosting 上，黑底形状始终不透明（DEV-022）
+    fileprivate func applyContentAlpha(_ alpha: CGFloat) {
+        contentHosting?.alphaValue = alpha
     }
 
     /// 纯黑背景直接铺在遮罩容器底（遮罩裁出刘海形），内容以 autoresizing 跟随。
@@ -1505,10 +1509,14 @@ final class NotchPanel: NSPanel {
                                                                cardScale: layout.scale,
                                                                compactMode: layout.compact))
         let container = NotchShapeContainerView(referenceNotchWidth: lastNotchSize.width,
+                                                barHeight: max(0, lastNotchSize.height - Self.startInset),
                                                 initialSize: CGSize(width: layout.width, height: layout.height))
         container.addSubview(hosting)
         hosting.frame = container.bounds
         hosting.autoresizingMask = [.width, .height]
+        // 弹簧每帧据这两个引用换形状参数 / 淡入内容（旧容器随 contentView 释放）
+        shapeContainer = container
+        contentHosting = hosting
         return container
     }
 
@@ -1568,18 +1576,65 @@ final class NotchPanel: NSPanel {
     }
 }
 
+/// 灵动岛形状几何（窗口坐标）：窗口 = 形状包围盒（宽 = 三条宽度里的最大值），
+/// 形状在窗口内水平居中；centerX/topY 是窗口顶边中点的锚点（DEV-027，位置永不做 origin 弹簧）。
+/// 三条宽度都是「外包络宽」：顶栏（刘海条）/ 细颈（水滴股）/ 底部鼓包，
+/// 外包络内的侧墙再由肩弧半径内缩（见遮罩路径）。终形态三者相等 = 等比放大的刘海形；
+/// 当前的展开/收起动画让三者始终相等（形状全程是等比刘海形），非相等的细颈/鼓包是形状能力。
+private struct NotchShapeState {
+    var centerX: CGFloat
+    var topY: CGFloat
+    var topWidth: CGFloat
+    var neckWidth: CGFloat
+    var bottomWidth: CGFloat
+    var height: CGFloat
+
+    /// 窗口宽 = 形状最大横向跨度（鼓包在细颈阶段不会超出顶栏，取最大值只是兜底）
+    var windowWidth: CGFloat { max(topWidth, max(neckWidth, bottomWidth)) }
+
+    var frame: NSRect {
+        NSRect(x: centerX - windowWidth / 2, y: topY - height, width: windowWidth, height: height)
+    }
+
+    /// 弹簧分量顺序：centerX, topY, topWidth, neckWidth, bottomWidth, height
+    func component(_ index: Int) -> CGFloat {
+        switch index {
+        case 0: return centerX
+        case 1: return topY
+        case 2: return topWidth
+        case 3: return neckWidth
+        case 4: return bottomWidth
+        default: return height
+        }
+    }
+
+    /// 终形态（三宽相等 = 刘海形）
+    static func full(frame: NSRect) -> NotchShapeState {
+        NotchShapeState(centerX: frame.midX, topY: frame.maxY,
+                        topWidth: frame.width, neckWidth: frame.width,
+                        bottomWidth: frame.width, height: frame.height)
+    }
+}
+
 /// 刘海形遮罩容器：顶部两角凹形肩弧（矩形角位补月牙黑，外侧背景呈圆角）、底部两角外凸圆角，
 /// 半径随容器宽度相对刘海宽
 /// 等比放大（弹簧每帧 setFrame 触发 layout 重建路径，动画全程保持「当前大小的刘海」）。
+/// 形状不止是窗口 frame：`applyProfile` 额外给定顶栏/细颈/鼓包三条外包络宽，
+/// 路径据此长出「细颈 + 底部鼓包」（水滴/沙漏），窗口 frame 只是包围盒。
 /// 本视图提供纯黑底色并做形状裁剪，hosting 由外部铺满。
 private final class NotchShapeContainerView: NSView {
     private let referenceWidth: CGFloat
+    /// 顶栏（刘海条）高度：顶栏以下才会出现细颈/鼓包
+    private let barHeight: CGFloat
     private let maskLayer: CAShapeLayer
+    /// 当前形状外包络宽（插件每帧经 applyProfile 更新；nil = 退化为整宽刘海形）
+    private var profile: (top: CGFloat, neck: CGFloat, bottom: CGFloat)?
 
     /// initialSize：创建时用已知面板终尺寸立即生成遮罩路径，
     /// 避免首次 orderFront 在 layout() 之前露出一帧方形内容
-    init(referenceNotchWidth: CGFloat, initialSize: CGSize) {
+    init(referenceNotchWidth: CGFloat, barHeight: CGFloat, initialSize: CGSize) {
         self.referenceWidth = max(1, referenceNotchWidth)
+        self.barHeight = max(0, barHeight)
         self.maskLayer = CAShapeLayer()
         // 弹簧 120Hz 改 path/frame 时禁用隐式动画，避免遮罩滞后于窗口几何
         maskLayer.actions = ["path": NSNull(), "bounds": NSNull(), "position": NSNull()]
@@ -1607,6 +1662,12 @@ private final class NotchShapeContainerView: NSView {
         updateMask()
     }
 
+    /// 更新形状外包络宽（弹簧每帧调用；高度始终取当前 bounds，跟随窗口 frame）
+    func applyProfile(topWidth: CGFloat, neckWidth: CGFloat, bottomWidth: CGFloat) {
+        profile = (topWidth, neckWidth, bottomWidth)
+        updateMask()
+    }
+
     /// 遮罩圆角：底角外凸圆角 + 顶部肩弧同源，半径随面板宽相对刘海宽等比放大
     private static func radii(width: CGFloat, height: CGFloat,
                               referenceWidth: CGFloat) -> (corner: CGFloat, shoulder: CGFloat) {
@@ -1623,97 +1684,183 @@ private final class NotchShapeContainerView: NSView {
     }
 
     private func updateMask() {
-        let radii = Self.radii(width: bounds.width, height: bounds.height,
-                               referenceWidth: referenceWidth)
         maskLayer.frame = bounds
-        maskLayer.path = Self.notchShapePath(width: bounds.width, height: bounds.height,
-                                             cornerRadius: radii.corner, shoulderRadius: radii.shoulder)
+        maskLayer.path = Self.notchShapePath(size: bounds.size, barHeight: barHeight,
+                                             topWidth: profile?.top ?? bounds.width,
+                                             neckWidth: profile?.neck ?? bounds.width,
+                                             bottomWidth: profile?.bottom ?? bounds.width,
+                                             referenceWidth: referenceWidth)
     }
 
-    /// 刘海形路径（层坐标 y 向上）：
-    /// - 顶边 = 面板满宽且与屏幕顶边齐平（盖住真刘海，和屏幕顶边连成一条线）；
+    /// 刘海形路径（层坐标 y 向上，形状在窗口内水平居中）：
+    /// - 顶边 = 顶栏外包络宽、与屏幕顶边齐平（盖住真刘海，和屏幕顶边连成一条线）；
     /// - 顶部两角 = 矩形角位上的月牙形黑色填充（凹形肩弧，弧心在角点正下方）：
     ///   黑色在上面铺满整个角位，再沿凹弧收细到内缩 `s` 的竖直侧墙，
     ///   使面板外侧背景在角上呈圆角（右上 ╭ / 左上 ╮），和真刘海肩部（屏幕顶边
     ///   绕开刘海侧壁的倒角）同形；
-    /// - 底部两角 = 外凸圆角。
-    private static func notchShapePath(width: CGFloat, height: CGFloat,
-                                       cornerRadius r: CGFloat, shoulderRadius s: CGFloat) -> CGPath {
+    /// - 顶栏下缘 = 凹圆角收细到细颈（水位拉丝），细颈竖直向下；
+    /// - 细颈 → 底部鼓包 = 两端切向竖直的三次贝塞尔（三宽相等时自动退化为直线）；
+    /// - 底部两角 = 外凸圆角，越靠近细股越圆（细颈阶段近乎半圆的水滴尖）。
+    private static func notchShapePath(size: CGSize, barHeight: CGFloat,
+                                       topWidth: CGFloat, neckWidth: CGFloat,
+                                       bottomWidth: CGFloat,
+                                       referenceWidth: CGFloat) -> CGPath {
+        let width = max(1, size.width)
+        let height = max(1, size.height)
+        let cx = width / 2
+
+        // 三条外包络宽（细颈/鼓包不会超过顶栏）
+        let topW = min(max(topWidth, 4), width)
+        let neckW = min(max(neckWidth, 4), topW)
+        let botW = min(max(bottomWidth, 4), topW)
+
+        // 顶部肩弧半径（随顶栏宽相对刘海宽等比放大，且不吃掉整个高度/宽度）
+        let shoulder = min(NotchPanel.cornerBase * topW / max(1, referenceWidth),
+                           height / 3, topW / 6)
+        // 外包络宽 → 侧墙相对中心的距离（外包络内再内缩一个肩弧半径，窄形状按宽度收窄）
+        func wall(_ envelope: CGFloat) -> CGFloat {
+            envelope / 2 - max(0, min(shoulder, envelope / 2 - 1))
+        }
+        let topWall = wall(topW)
+        let neckWall = wall(neckW)
+        let botWall = wall(botW)
+
+        // 底部圆角：窄成细股时趋近半圆（水滴尖），扩到接近终宽时回到常规圆角
+        let fullyRound = botWall
+        let cornerAtFinal = min(NotchPanel.cornerBase * botW / max(1, referenceWidth), fullyRound)
+        let narrowness = 1 - min(1, botW / max(1, topW))
+        let bottomRadius = cornerAtFinal + (fullyRound - cornerAtFinal) * narrowness
+
+        // 顶栏下缘 → 身体；身体最低处不低于底角圆心（迷你刘海/段1-2 高度 = 顶栏高时身体为空）
+        let barH = min(max(0, barHeight), height)
+        let bodyTop = max(0, height - barH)
+        let bodyLimit = max(bodyTop, bottomRadius)
+        let fillet = min(12, max(0, (bodyLimit - bottomRadius) * 0.5), barH * 0.7)
+        // 鼓包只占下半段：细颈竖直延伸到该高度才开始向外扩（沙漏的腰）
+        let flareStart = bottomRadius + max(0, bodyLimit - fillet - bottomRadius) * 0.38
+        let flareSpan = max(0, flareStart - bottomRadius)
+
         let path = CGMutablePath()
-        path.move(to: CGPoint(x: 0, y: height))                        // 顶边左端（屏幕顶边）
-        // 顶左肩弧：(0,h) → (s, h-s)，弧心 (0,h-s)，水平切顶边/竖直切左墙
-        path.addArc(center: CGPoint(x: 0, y: height - s), radius: s,
+        path.move(to: CGPoint(x: cx - topW / 2, y: height))            // 顶边左端（屏幕顶边）
+        // 顶左肩弧：(cx-topW/2, h) → 内缩 shoulder 的侧墙，弧心 (cx-topW/2, h-shoulder)
+        path.addArc(center: CGPoint(x: cx - topW / 2, y: height - shoulder), radius: shoulder,
                     startAngle: .pi / 2, endAngle: 0, clockwise: true)
-        path.addLine(to: CGPoint(x: s, y: r))                          // 左墙（内缩 s）
-        path.addArc(center: CGPoint(x: s + r, y: r), radius: r,
+        path.addLine(to: CGPoint(x: cx - topWall, y: bodyLimit))        // 顶栏左墙
+        // 顶栏下缘的凹圆角 → 细颈（左）
+        path.addCurve(to: CGPoint(x: cx - neckWall, y: bodyLimit - fillet),
+                      control1: CGPoint(x: cx - topWall, y: bodyLimit - fillet * 0.55),
+                      control2: CGPoint(x: cx - neckWall, y: bodyLimit - fillet * 0.45))
+        path.addLine(to: CGPoint(x: cx - neckWall, y: flareStart))      // 细颈左墙
+        // 细颈 → 底部鼓包（左）
+        path.addCurve(to: CGPoint(x: cx - botWall, y: bottomRadius),
+                      control1: CGPoint(x: cx - neckWall, y: flareStart - flareSpan * 0.42),
+                      control2: CGPoint(x: cx - botWall, y: bottomRadius + flareSpan * 0.42))
+        path.addArc(center: CGPoint(x: cx - botWall + bottomRadius, y: bottomRadius),
+                    radius: bottomRadius,
                     startAngle: .pi, endAngle: .pi * 3 / 2, clockwise: false)  // 底左角
-        path.addLine(to: CGPoint(x: width - s - r, y: 0))              // 底边
-        path.addArc(center: CGPoint(x: width - s - r, y: r), radius: r,
+        path.addLine(to: CGPoint(x: cx + botWall - bottomRadius, y: 0))            // 底边
+        path.addArc(center: CGPoint(x: cx + botWall - bottomRadius, y: bottomRadius),
+                    radius: bottomRadius,
                     startAngle: .pi * 3 / 2, endAngle: .pi * 2, clockwise: false) // 底右角
-        path.addLine(to: CGPoint(x: width - s, y: height - s))         // 右墙（内缩 s）
-        // 顶右肩弧：(w-s, h-s) → (w, h)，弧心 (w,h-s)
-        path.addArc(center: CGPoint(x: width, y: height - s), radius: s,
+        // 底部鼓包 → 细颈（右）
+        path.addCurve(to: CGPoint(x: cx + neckWall, y: flareStart),
+                      control1: CGPoint(x: cx + botWall, y: bottomRadius + flareSpan * 0.42),
+                      control2: CGPoint(x: cx + neckWall, y: flareStart - flareSpan * 0.42))
+        path.addLine(to: CGPoint(x: cx + neckWall, y: bodyLimit - fillet))          // 细颈右墙
+        // 细颈 → 顶栏下缘（右）
+        path.addCurve(to: CGPoint(x: cx + topWall, y: bodyLimit),
+                      control1: CGPoint(x: cx + neckWall, y: bodyLimit - fillet * 0.45),
+                      control2: CGPoint(x: cx + topWall, y: bodyLimit - fillet * 0.55))
+        path.addLine(to: CGPoint(x: cx + topWall, y: height - shoulder))            // 顶栏右墙
+        // 顶右肩弧：内缩侧墙 → 顶边右端，弧心 (cx+topW/2, h-shoulder)
+        path.addArc(center: CGPoint(x: cx + topW / 2, y: height - shoulder), radius: shoulder,
                     startAngle: .pi, endAngle: .pi / 2, clockwise: true)
-        path.closeSubpath()                                            // 顶边 → (0,h)
+        path.closeSubpath()                                            // 顶边 → 左端
         return path
     }
 }
 
-/// iOS 风格弹簧动画驱动器（只驱动 NotchPanel 的窗口 frame，透明度恒定、不参与动画）。
-/// 四分量 = 锚点 centerX / 锚点 topY / width / height：每帧由锚点与尺寸反推 origin
-/// （x = centerX - width/2、y = topY - height），尺寸过冲时窗口围绕最终顶边中点
-/// 对称放大/收回，位置不发生整体平移（DEV-027）。
+/// iOS 风格弹簧动画驱动器（驱动形状状态 + 窗口 frame，透明度恒定、不参与动画）。
+/// 六分量 = 锚点 centerX / 锚点 topY / 顶栏宽 / 细颈宽 / 底部鼓包宽 / 高：每帧由锚点与尺寸反推
+/// 窗口 origin（x = centerX - 宽/2、y = topY - 高），尺寸过冲时围绕最终顶边中点
+/// 对称放大/收回，位置不整体平移（DEV-027）；窗口宽 = 三条宽度里的最大值（形状包围盒）。
 /// macOS 对窗口 frame 没有公开的弹簧动画 API（NSAnimationContext 仅支持贝塞尔曲线，
 /// animator() 可动画属性的限制见 PITFALLS_DEV.md DEV-016），这里在主线程用定时器对弹簧
 /// 微分方程做半隐式欧拉积分后直接 setFrame。response + dampingFraction 语义同 UIKit，
-/// dampingFraction < 1 带过冲回弹。分量差异化调参：终点段/打断续接用
-/// expandTuning/collapseTuning，段1 引导段用 stageOneExpandTuning/stageOneCollapseTuning。
+/// dampingFraction < 1 带过冲回弹。
+/// 多段编排：`animate(legs:)` 顺序播放若干段，每段有自己的目标形状、六分量调参、
+/// 引导分量与交接进度；引导分量位移进度达阈值时以当前值/速度无缝续接到下一段
+/// （无停顿、无中间回弹）。当前的展开/收起都是单段（`animate(to:)`）：六分量共用同一套
+/// response/dampingFraction，靠「宽度领先、高度滞后」拉开层次，尺寸过冲直接由阻尼比 < 1
+/// 给出（一次回弹，没有中途换道）。
 /// 「刘海生长/缩回」全程必须不透明：任何 alpha 淡入淡出都会让早期生长不可见、
-/// 被感知成「从一侧滑入」（DEV-022），形状渐变本身就是全部视觉效果。
+/// 被感知成「从一侧滑入」（DEV-022），形状渐变本身就是全部视觉效果；
+/// 唯一例外是内容视图（hosting）在自己的段里淡入——黑底形状始终不透明。
 /// 动画进行中再次 animate：各分量以当前值/速度为起点重定向（展开↔收起互相打断无缝续接），
-/// 旧动画未执行的 handoff 与 completion 作废。
+/// 旧动画未执行的交接与 completion 作废。
 private final class NotchSpringAnimator {
-    /// 分量弹簧调参（response + 阻尼比），顺序对齐 springs：centerX, topY, width, height。
-    /// 灵动岛式液体拉伸：宽先冲出（带过冲）、高慢半拍平滑下填、锚点临界阻尼零回弹；
-    /// 单一组参数（四分量同步、阻尼比 0.72 过冲仅 ~4%）会被感知成线性生长。
-    /// 过冲量实测（含交接初速，非静止起跳的理论值）：width ζ=0.47 ≈ 105%，
-    /// height ζ=0.66 ≈ 105%。
-    /// 单一分量调参；嵌在 file-private 类里，类型仅本文件可见
+    /// 分量弹簧调参（response + 阻尼比），顺序对齐 springs：centerX, topY, 顶栏宽, 细颈宽,
+    /// 鼓包宽, 高。过冲量见下方各 tuning 的实测注释（宽 ≈ +3%、高 ≈ +1%）。
     struct SpringTuning {
         let response: TimeInterval
         let dampingFraction: CGFloat
     }
-    /// 展开段2/重定向（终点段：宽先冲出带过冲、高慢半拍跟上）
-    private static let expandTuning: [SpringTuning] = [
+    /// 展开/重定向到终形态：宽高同时起跳、宽度领先、高度慢半拍（底缘跟着坠下来），
+    /// 锚点临界阻尼零回弹（DEV-027），尺寸分量轻微欠阻尼、各自只过冲一次就回落。
+    /// 实测（120Hz 半隐式欧拉模拟，迷你刘海 168×26 → 终形态 353×250）：
+    /// 宽 response 0.32 / ζ0.70 → 峰值 +3.0%、0.37s 落定；
+    /// 高 response 0.36 / ζ0.78 → 峰值 +0.9%、0.45s 落定。
+    /// 三宽恒同参 → 形状全程是等比放大的刘海形（不会长出细颈/鼓包）。
+    static let expandTuning: [SpringTuning] = [
         .init(response: 0.32, dampingFraction: 1.0),    // centerX：锚点零回弹
         .init(response: 0.32, dampingFraction: 1.0),    // topY：锚点零回弹
-        .init(response: 0.38, dampingFraction: 0.47),   // width：先冲出，~105%
-        .init(response: 0.52, dampingFraction: 0.66),   // height：慢半拍跟上，~105%
+        .init(response: 0.32, dampingFraction: 0.70),   // 顶栏宽：先铺开，峰值 +3%
+        .init(response: 0.32, dampingFraction: 0.70),   // 细颈宽（恒等于顶栏宽）
+        .init(response: 0.32, dampingFraction: 0.70),   // 鼓包宽（恒等于顶栏宽）
+        .init(response: 0.36, dampingFraction: 0.78),   // 高：慢半拍跟上，峰值 +1%
     ]
-    /// 收起段2/重定向（终点段：宽度更快折回，更利落）
-    private static let collapseTuning: [SpringTuning] = [
-        .init(response: 0.32, dampingFraction: 1.0),    // centerX：锚点零回弹
-        .init(response: 0.32, dampingFraction: 1.0),    // topY：锚点零回弹
-        .init(response: 0.32, dampingFraction: 0.47),   // width：更快收拢，~105%
-        .init(response: 0.52, dampingFraction: 0.66),   // height：~105%
+    /// 收起/重定向到更小尺寸：全部临界阻尼（收拢不该回弹；迷你刘海藏在硬件后，过冲也看不见），
+    /// 宽度更快折回、高度跟上，≈0.4s 收干净
+    static let collapseTuning: [SpringTuning] = [
+        .init(response: 0.30, dampingFraction: 1.0),    // centerX：锚点零回弹
+        .init(response: 0.30, dampingFraction: 1.0),    // topY：锚点零回弹
+        .init(response: 0.30, dampingFraction: 1.0),    // 顶栏宽
+        .init(response: 0.30, dampingFraction: 1.0),    // 细颈宽
+        .init(response: 0.30, dampingFraction: 1.0),    // 鼓包宽
+        .init(response: 0.34, dampingFraction: 1.0),    // 高
     ]
-    /// 段1 引导段（handoff 交接前）：临界阻尼无回弹——先横拉/先纵收本身不带过冲，
-    /// 回弹只留给交接后的终点段；本段静止分量的参数无实际作用
-    static let stageOneExpandTuning: [SpringTuning] = [
-        .init(response: 0.32, dampingFraction: 1.0),    // centerX
-        .init(response: 0.32, dampingFraction: 1.0),    // topY
-        .init(response: 0.34, dampingFraction: 1.0),    // width：横向拉开（临界阻尼）
-        .init(response: 0.52, dampingFraction: 1.0),    // height（本段不动）
-    ]
-    static let stageOneCollapseTuning: [SpringTuning] = [
-        .init(response: 0.32, dampingFraction: 1.0),    // centerX
-        .init(response: 0.32, dampingFraction: 1.0),    // topY
-        .init(response: 0.32, dampingFraction: 1.0),    // width（本段不动）
-        .init(response: 0.36, dampingFraction: 1.0),    // height：纵向先收（临界阻尼）
-    ]
+
+    /// 一段编排：目标是形状状态；lead = 引导分量下标（0 centerX / 1 topY / 2 顶栏宽 /
+    /// 3 细颈宽 / 4 鼓包宽 / 5 高），该分量位移进度达 handoffProgress 即无缝续接下一段
+    /// （1 = 最后一段，靠落定结束）；contentAlpha 非空时本段把内容视图透明度过渡到该值。
+    struct Leg {
+        let target: NotchShapeState
+        let tuning: [SpringTuning]
+        let lead: Int
+        let handoffProgress: CGFloat
+        var contentAlpha: CGFloat?
+
+        init(target: NotchShapeState, tuning: [SpringTuning], lead: Int,
+             handoffProgress: CGFloat, contentAlpha: CGFloat? = nil) {
+            self.target = target
+            self.tuning = tuning
+            self.lead = lead
+            self.handoffProgress = handoffProgress
+            self.contentAlpha = contentAlpha
+        }
+    }
+
     /// settle 阈值：收紧到 0.25pt / 2pt·s⁻¹，避免尾部带速急停的微顿
     private static let valueEpsilon: CGFloat = 0.25
     private static let velocityEpsilon: CGFloat = 2
+    /// 内容淡入在引导分量位移进度到该比例时完成（宽度 response 0.32 下 ≈ 0.1s）
+    private static let contentFadeProgress: CGFloat = 0.6
+    /// 动画帧跟踪（`ZEROFLOW_NOTCH_TRACE=1`）：每 50ms 打一行形状分量到日志，
+    /// 用来数值检查有没有停顿/反向/顿挫，不靠肉眼
+    private static let traceEnabled = ProcessInfo.processInfo.environment["ZEROFLOW_NOTCH_TRACE"] == "1"
+    private var traceStart: CFTimeInterval = 0
+    private var traceLast: CFTimeInterval = 0
+    private var traceFrames = 0
 
     private struct Spring {
         var value: CGFloat
@@ -1751,23 +1898,20 @@ private final class NotchSpringAnimator {
         }
     }
 
-    /// 分量顺序：centerX, topY, width, height（位置 = 锚点，origin 每帧反推）
+    /// 分量顺序：centerX, topY, topWidth, neckWidth, bottomWidth, height（位置 = 锚点，origin 每帧反推）
     private var springs: [Spring]?
     private var completion: (() -> Void)?
     private var timer: Timer?
     private weak var panel: NotchPanel?
 
-    /// 中途交接（两段连续动画）：段1 引导分量位移进度达 progress 时，
-    /// 以当前值/速度无缝重定向到 targetFrame（无停顿、无中间回弹）
-    struct Handoff {
-        let targetFrame: NSRect
-        let progress: CGFloat
-    }
-    private var pendingHandoff: Handoff?
-    private var handoffCollapse = false
-    /// 引导分量（展开=宽度 / 收起=高度）段1 起点/目标值，tick 里按位移进度判定交接时机
-    private var handoffStartValue: CGFloat = 0
-    private var handoffLegTarget: CGFloat = 0
+    /// 后续待播的段
+    private var legs: [Leg] = []
+    /// 正在播放的段（含引导分量与交接阈值）
+    private var currentLeg: Leg?
+    /// 当前段引导分量的起点值（算位移进度用）
+    private var legStartValue: CGFloat = 0
+    /// 当前段开始时内容视图的透明度（本段指定 contentAlpha 时按进度过渡）
+    private var legStartAlpha: CGFloat = 1
 
     init(panel: NotchPanel) {
         self.panel = panel
@@ -1777,60 +1921,75 @@ private final class NotchSpringAnimator {
         timer?.invalidate()
     }
 
-    /// 启动/重定向动画（只驱动窗口 frame）。必须主线程调用（setFrame）。
-    /// collapse = 收起方向（宽度弹簧响应更快，折回更利落）。
-    /// handoff 非空时为两段连续动画：段1 用临界阻尼引导段调参弹向 targetFrame，
-    /// 引导分量进度达 handoff.progress 时无缝续接到交接目标（默认终点段调参）。
-    func animate(to targetFrame: NSRect, collapse: Bool = false,
-                 handoff: Handoff? = nil, completion: (() -> Void)? = nil) {
-        guard let panel else { return }
+    /// 启动多段编排（只驱动形状与窗口 frame）。必须主线程调用（setFrame）。
+    /// 打断：以各分量当前值/速度重定向到第一段的目标，旧 completion 作废。
+    func animate(legs newLegs: [Leg], completion: (() -> Void)? = nil) {
+        guard panel != nil, let first = newLegs.first else { return }
         self.completion = nil // 被打断动画的收尾作废
-        pendingHandoff = nil
-
-        let tuning: [SpringTuning]
-        if handoff != nil {
-            tuning = collapse ? Self.stageOneCollapseTuning : Self.stageOneExpandTuning
-        } else {
-            tuning = collapse ? Self.collapseTuning : Self.expandTuning
-        }
-        rebuildSprings(target: targetFrame, tuning: tuning)
-
-        if let handoff {
-            pendingHandoff = handoff
-            handoffCollapse = collapse
-            handoffStartValue = collapse ? panel.frame.height : panel.frame.width
-            handoffLegTarget = collapse ? targetFrame.height : targetFrame.width
-        }
+        legs = Array(newLegs.dropFirst())
+        traceStart = 0
+        traceFrames = 0
+        startLeg(first)
         self.completion = completion
         startTimerIfNeeded()
     }
 
-    /// 以当前值/速度重建四分量弹簧（打断续接与 handoff 交接共用；不动 completion）
-    private func rebuildSprings(target: NSRect, tuning: [SpringTuning]) {
+    /// 单段重定向（终形态收尾/收起/尺寸变化）
+    func animate(to target: NotchShapeState, tuning: [SpringTuning] = NotchSpringAnimator.expandTuning,
+                 lead: Int = 2, contentAlpha: CGFloat? = nil,
+                 completion: (() -> Void)? = nil) {
+        animate(legs: [Leg(target: target, tuning: tuning, lead: lead,
+                           handoffProgress: 1, contentAlpha: contentAlpha)], completion: completion)
+    }
+
+    /// 开始一段：以当前值/速度重建六分量弹簧（首段=打断续接，后续段=无缝交接）
+    private func startLeg(_ leg: Leg) {
+        currentLeg = leg
+        rebuildSprings(target: leg.target, tuning: leg.tuning)
+        legStartValue = springs?[min(max(leg.lead, 0), 5)].value ?? 0
+        legStartAlpha = panel?.contentAlpha ?? 1
+        if leg.contentAlpha != nil {
+            panel?.applyContentAlpha(legStartAlpha)
+        }
+    }
+
+    /// 以当前值/速度重建六分量弹簧（打断续接与段间交接共用；不动 completion）
+    private func rebuildSprings(target: NotchShapeState, tuning: [SpringTuning]) {
         guard let panel else { return }
         let frame = panel.frame
-        let previous = springs?.count == 4 ? springs : nil
+        let previous = springs?.count == 6 ? springs : nil
 
         func make(_ index: Int, _ initial: CGFloat, _ target: CGFloat) -> Spring {
+            let tune = tuning[min(max(index, 0), tuning.count - 1)]
             if let previous {
                 // 打断续接：沿用该分量当前的值与速度
                 return Spring(value: previous[index].value, velocity: previous[index].velocity,
-                              target: target, response: tuning[index].response,
-                              dampingFraction: tuning[index].dampingFraction,
+                              target: target, response: tune.response,
+                              dampingFraction: tune.dampingFraction,
                               valueEpsilon: Self.valueEpsilon, velocityEpsilon: Self.velocityEpsilon)
             }
-            return Spring(value: initial, velocity: 0, target: target, response: tuning[index].response,
-                          dampingFraction: tuning[index].dampingFraction,
+            return Spring(value: initial, velocity: 0, target: target, response: tune.response,
+                          dampingFraction: tune.dampingFraction,
                           valueEpsilon: Self.valueEpsilon, velocityEpsilon: Self.velocityEpsilon)
         }
 
         springs = [
-            make(0, frame.midX, target.midX),
-            make(1, frame.maxY, target.maxY),
-            make(2, frame.width, target.width),
-            make(3, frame.height, target.height),
+            make(0, frame.midX, target.centerX),
+            make(1, frame.maxY, target.topY),
+            make(2, frame.width, target.topWidth),
+            make(3, frame.width, target.neckWidth),
+            make(4, frame.width, target.bottomWidth),
+            make(5, frame.height, target.height),
         ]
         startTimerIfNeeded()
+    }
+
+    /// 引导分量本段的位移进度（0…1；目标差值可忽略时视为已到位）
+    private func progress(of leg: Leg, in springs: [Spring]) -> CGFloat {
+        let index = min(max(leg.lead, 0), 5)
+        let travel = leg.target.component(index) - legStartValue
+        guard abs(travel) > 0.5 else { return 1 }
+        return (springs[index].value - legStartValue) / travel
     }
 
     private func startTimerIfNeeded() {
@@ -1864,20 +2023,23 @@ private final class NotchSpringAnimator {
             }
         }
         self.springs = springs
-        let width = springs[2].value
-        let height = springs[3].value
-        panel.setFrame(NSRect(x: springs[0].value - width / 2, y: springs[1].value - height,
-                              width: width, height: height), display: true)
+        panel.apply(NotchShapeState(centerX: springs[0].value, topY: springs[1].value,
+                                    topWidth: springs[2].value, neckWidth: springs[3].value,
+                                    bottomWidth: springs[4].value, height: springs[5].value),
+                    display: true)
+        if Self.traceEnabled { trace(springs) }
 
-        // 中途交接：引导分量进度达阈值 → 立即以当前值/速度续接到交接目标（无停顿无回弹）
-        if let handoff = pendingHandoff {
-            let current = handoffCollapse ? springs[3].value : springs[2].value
-            let travel = handoffLegTarget - handoffStartValue
-            let progress = abs(travel) > 0.5 ? (current - handoffStartValue) / travel : 1
-            if progress >= handoff.progress {
-                pendingHandoff = nil
-                rebuildSprings(target: handoff.targetFrame,
-                               tuning: handoffCollapse ? Self.collapseTuning : Self.expandTuning)
+        if let leg = currentLeg {
+            let legProgress = progress(of: leg, in: springs)
+            // 内容视图透明度：引导分量走完 contentFadeProgress 行程即完全不透明（≈0.1s）——
+            // 展开起手就能看到内容随形状长出来；黑底形状始终不透明（DEV-022）
+            if let alphaTarget = leg.contentAlpha {
+                let p = min(1, max(0, legProgress / Self.contentFadeProgress))
+                panel.applyContentAlpha(legStartAlpha + (alphaTarget - legStartAlpha) * p)
+            }
+            // 段间交接：引导分量进度达阈值 → 立即以当前值/速度续接下一段（无停顿无回弹）
+            if leg.handoffProgress < 1, !legs.isEmpty, legProgress >= leg.handoffProgress {
+                startLeg(legs.removeFirst())
                 return // 交接当帧弹簧已重建，不参与落定判定
             }
         }
@@ -1894,6 +2056,27 @@ private final class NotchSpringAnimator {
         timer?.invalidate()
         timer = nil
         springs = nil
-        pendingHandoff = nil
+        legs = []
+        currentLeg = nil
+    }
+
+    /// 逐帧打形状分量与帧间隔（`ZEROFLOW_NOTCH_TRACE=1`）：用来数值核对节奏、
+    /// 过冲幅度和有没有主线程卡顿（dt 尖峰），不靠肉眼
+    private func trace(_ springs: [Spring]) {
+        let now = CFAbsoluteTimeGetCurrent()
+        if traceStart == 0 {
+            traceStart = now
+            traceFrames = 0
+            traceLast = now
+            ZSLog(String(format: "notch trace start target topW=%.1f neckW=%.1f botW=%.1f h=%.1f",
+                         springs[2].target, springs[3].target, springs[4].target, springs[5].target))
+        }
+        traceFrames += 1
+        let ms = (now - traceStart) * 1000
+        let dt = (now - traceLast) * 1000
+        traceLast = now
+        ZSLog(String(format: "notch trace f=%d t=%.0fms dt=%.1f topW=%.1f h=%.1f a=%.2f",
+                     traceFrames, ms, dt, springs[2].value, springs[5].value,
+                     panel?.contentAlpha ?? -1))
     }
 }
