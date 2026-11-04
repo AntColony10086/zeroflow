@@ -71,6 +71,10 @@ final class MenuBarController: NSObject, NSApplicationDelegate {
         // 灵动岛刘海面板：按开关初始状态启停（开关变化由 NotchHotspotController 自行监听恢复）
         NotchHotspotController.shared.reapply()
 
+        // 剪贴板历史：按开关初始状态启停监听与全局热键（开关变化由各自监听恢复）
+        ClipboardMonitor.shared.reapply()
+        ClipboardPanelController.shared.reapply()
+
         // 右键菜单扩展自愈：Sequoia/Tahoe 下 FinderSync 扩展更新后常有「已启用但右键菜单
         // 不出现」的陈旧实例问题，启动时若已启用则重载一次，保证右键菜单立即可用。
         DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
@@ -99,6 +103,13 @@ final class MenuBarController: NSObject, NSApplicationDelegate {
             ZSLog("env ZEROFLOW_SWITCHER_DEBUG: defer 1s then dump window list")
             DispatchQueue.main.asyncAfter(deadline: .now() + 1) {
                 CommandTabSwitcher.runDebugProbe()
+            }
+        }
+        if let clipboardDebug = ProcessInfo.processInfo.environment["ZEROFLOW_CLIPBOARD_DEBUG"], clipboardDebug != "0" {
+            let expand = clipboardDebug == "preview"
+            ZSLog("env ZEROFLOW_CLIPBOARD_DEBUG=\(clipboardDebug): defer 1.5s then show clipboard panel, expand=\(expand)")
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
+                ClipboardPanelController.shared.showForDebug(expandAfter: expand ? 1 : 0)
             }
         }
         if let focusStr = ProcessInfo.processInfo.environment["ZEROFLOW_AUTO_FOCUS"],

@@ -171,3 +171,39 @@
 - **Pitfall:** 想在 `NotchShapeContainerView`(或面板视图)重写 `scrollWheel` 做双指左右切换,手指落在卡片(日历日程是 SwiftUI `ScrollView`)上时事件被 SwiftUI 先吃掉,容器收不到,表现为「滑卡片区域没反应、只有滑边缘才行」。
 - **Cause:** scrollWheel 先派发给指针命中的最深视图(SwiftUI hosting 内部的滚动区域),未被显式放行时不保证沿响应链回到自建容器;非激活面板也不成为 key,无法用键盘/焦点事件兜底。
 - **Prevention:** 用 `NSEvent.addLocalMonitorForEvents(matching: .scrollWheel)` 在 `NotchPanel` 里拦事件(`event.window === self` 且面板可见才处理),不消费原事件,纵向滚动/惯性(`momentumPhase != []`)原样放行;锁轴(累积位移 ≥12pt 且横向占优)后累积 ≥50pt 才切一张,并在手势结束前不再触发,避免一次滑动连翻多张。
+
+## DEV-035: 非激活面板要收键盘只能靠 `nonactivatingPanel` + `canBecomeKey = true`
+- **Pitfall:** 照搬灵动岛/Dock 预览的 `NSPanel`(`canBecomeKey = false`)做剪贴板面板:面板能显示、点击行也生效,但搜索框打不进字,↑↓/↵/esc 全无反应——键盘事件仍派给原前台 app。
+- **Cause:** `.nonactivatingPanel` 只表示「点击本窗口不激活 app」,并不让它成为 key window;`canBecomeKey = false` 时本 app 又没有全局事件 tap 转发按键(灵动岛/Dock 预览靠 listen-only CGEventTap 拿输入,剪贴板面板不装 tap),于是永远收不到键盘。
+- **Prevention:** 想「不激活 app 也能打字」,`styleMask` 用 `.borderless + .nonactivatingPanel`、`canBecomeKey = true`、`becomesKeyOnlyIfNeeded = false`,`makeKeyAndOrderFront` 后断言 `isKeyWindow == true`(本项目其余面板故意保持 false,别顺手改);兜底分支一旦 `NSApp.activate`,真的会抢走前台,必须记住 `previousApp` 并在收起/粘贴前 `NSRunningApplication.activate` 还原,否则合成 ⌘V 会打到自己身上;方向键/回车/esc 用 `NSEvent.addLocalMonitorForEvents(.keyDown)` 按 `event.window === panel` 拦截并吞掉,其余按键放行给 SwiftUI `TextField`(输入法搜索依赖它)。
+
+## DEV-036: 面板贴插入点弹出：AX 坐标是「主屏左上为原点」，且必须在面板成为 key 之前取
+- **Pitfall:** 用 `kAXFocusedUIElementAttribute` + `AXBoundsForRange` 拿 caret 矩形后直接当 Cocoa 坐标用,面板出现在屏幕另一半;或热键里先 `makeKeyAndOrderFront` 再取焦点,拿到的永远是面板自己的搜索框,锚点跑到面板上。
+- **Cause:** AX 的全屏坐标原点在主屏**左上角**(y 向下),Cocoa 原点在主屏**左下角**;非激活面板一旦成为 key window,系统焦点即转移,`AXFocusedUIElement` 变成我们的 `TextField`。
+- **Prevention:** 坐标换算 `cocoaY = NSScreen.screens[0].frame.maxY - axRect.maxY`,并用 `NSScreen.screens` 的 `frame.intersects` 判断落屏;取 caret 的时机固定在 `makeKeyAndOrderFront` **之前**,并用 `AXUIElementGetPid != 自己` 兜底跳过自身;`AXUIElementSetMessagingTimeout(0.25)` 防目标 app 卡死拖住热键;密码框(`AXSecureTextField`)直接放弃定位;拿不到 caret 时按「元素 frame → 鼠标位置」降级。
+
+## DEV-037: 液态玻璃作为窗口背景要放在 hosting 之下当兄弟视图，圆角各自设
+- **Pitfall:** 把 `NSGlassEffectView` 当 SwiftUI `.background` 或反过来把 hosting 塞进 `glass.contentView`,要么玻璃不出现(被宿主裁剪/不参与窗口背后采样),要么窗口宽高被 SwiftUI 固定 frame 钳死(DEV-024)。
+- **Cause:** 液态玻璃是窗口级合成效果,必须整块铺满窗口底层;`contentView` 承载 SwiftUI 会经约束链反向钳制窗口尺寸。
+- **Prevention:** `contentView` 用普通 `NSView` 容器:先 `addSubview(glass)`(frame=bounds、autoresizingMask=[w,h]、`cornerRadius` 自己设),再 `addSubview(hosting)` 盖在上面(同样只用 autoresizing);不要给容器加 `masksToBounds`(会把玻璃/磨砂裁掉),圆角分别设在玻璃(`cornerRadius`)或磨砂(`layer.cornerRadius + masksToBounds`)上;外观、降低透明度、Liquid Glass 强度全交给系统原生玻璃,**不要**再叠 `tintColor`/不透明底/描边(会和系统效果打架、也看不出滑杆效果),也不要用 `alphaValue` 调玻璃透明度(会连内容一起透明)。
+
+
+## DEV-038: 自动隐藏 Dock 时 AX 报的是「隐藏位」坐标，Dock 预览的触发区/闸门会整体偏出屏幕
+- **Pitfall:** 开启 Dock 自动隐藏后，Dock 预览「偶尔能弹」:鼠标停在图标上大概率不弹,只有贴到屏幕最底一条缝才弹。日志里的 Dock 项缓存 bbox 是 `(410, 961, 588, 54)`,而屏幕只有 `1470×956` —— 整条落在屏幕底边之外。
+- **Cause:** Dock 自动隐藏时其 AX item/窗口的 position 是隐藏位(比展开位低一整条 Dock 高 ≈ 54pt),缓存重建若在隐藏期间发生就一直是这个坐标;触发区(`stripTriggerMargin=30`)与闸门(`stripGateMargin=16`)都以外扩后的条带判定,于是触发线从 `y≥872` 偏移到 `y≥931`、闸门从 `y≥886` 偏移到 `y≥945`,只剩屏幕最底 11pt 能过。再叠加「指针停住后不再有 mouseMoved + 展开动画期间 AX 命中返回桌面」,失败一次就再无重试机会。
+- **Prevention:** 条带几何一律先吸附到最近的屏幕边(横向排布贴底边、纵向排布贴左/右边,已落位时幂等)再外扩,不要直接相信 AX 的 position;闸门优先用「权威命中到的图标自身 frame」(实时)而非 Dock 整体条带;权威命中失败且指针仍在 Dock 区域、Dock 未落位(主窗口框 <95% 在屏内)时按 ~120ms/1.2s 短期重试,成功命中后把图标 frame 与缓存比对,不一致就置缓存失效重建。
+
+## DEV-039: 灵动岛形状不等于窗口 frame，遮罩路径必须由「形状状态」驱动
+- **Pitfall:** 想做「水滴/沙漏」形状（顶栏宽 ≠ 细颈宽 ≠ 底部鼓包宽）时，仍按 `layout()` 里的 `bounds` 生成遮罩路径：弹簧每帧改的是窗口 frame，遮罩只会画成「等比放大的刘海形」，细颈永远出不来；反过来若把形状宽当成窗口宽去 `setFrame`，窗口宽度会在细颈、鼓包之间来回跳（窗口只是形状的包围盒，包围盒宽度 = 三条里最大的那条）。
+- **Cause:** 旧实现的隐含前提是「形状 == 窗口矩形」，所以 `layout()` 直接拿 bounds 重建路径；引入细颈后窗口宽（`max(顶栏, 细颈, 鼓包)`）与形状侧墙位置不再一致。
+- **Prevention:** 动画驱动的是 `NotchShapeState`（锚点 centerX/topY + 顶栏宽/细颈宽/鼓包宽/高），六分量弹簧每帧算完先 `apply(state)`：窗口 frame 取包围盒、再把三条宽度经 `applyProfile` 喂给遮罩容器；`layout()` 只重建路径、不自行推导宽度（否则会覆盖参数）。路径里的三次贝塞尔拐点全部要能在「三宽相等」时退化为直线，否则终形态和原来的刘海形对不上（对着 `notchShapePath` 单测几个关键状态：迷你刘海/三宽相等的终形态/细颈/沙漏，用 `CGPath.contains` 采样打印 ASCII 轮廓最快）。窗口包围盒在非等宽形状下可能比终形态窄，命中区域仍用弹簧终点 `targetFrame`（DEV-029），别用当前 frame。**若真要三宽不等**（水滴/沙漏），收尾过冲别靠欠阻尼：`dampingFraction < 1` 的过冲量是「各自行程」的百分比，细颈行程最长会冲出到比顶栏还宽，视觉上腰先鼓一下，得改用显式过冲目标态 + 临界阻尼。当前版本三宽恒相等（单段弹簧，见 DEV-040），所以尺寸分量直接用阻尼比 < 1 给过冲是安全的。
+
+## DEV-040: 灵动岛弹出动画别做多段编排——单段「宽领先/高滞后」弹簧才像 iOS 的液体铺开
+- **Pitfall:** 想做「一滴水滴滴下来」的六段编排（横条→回缩→细股→鼓包→过冲→回落）：看起来有想法，实际观感是「一条黑横杠突然从刘海两侧伸出来 → 缩回去抖一下 → 黑条下面挂一根细黑柱 → 才终于填满」，累计 1.1–1.4s，明显顿挫拖沓；内容只在最后一段才淡入，前面一大段时间是个空黑壳。
+- **Cause:** ① 每段都独立临界阻尼、交接阈值又取 0.85–0.92，等于每段「几乎跑完、速度掉到很低」才重新起跳，加速度不连续 → 六次轻微减速—再启动，读作顿挫；② 段1/段2 在宽度已到 80%/72% 终宽时高度还停在刘海高（≈26pt），面板被拉成远扁于终形态的横条（282×26），超出刘海硬件的部分立刻可见；③ 段3 把窗口压到 52pt 宽，SwiftUI 内容（按终尺寸固定 frame）只剩中间一条被遮罩裁出的窄缝，虽然 alpha 为 0，但整段没有任何视觉承载。
+- **Prevention:** 展开用**单段弹簧**，靠「宽度领先、高度滞后」拉开层次：宽 response 0.32 / ζ 0.70、高 response 0.36 / ζ 0.78、锚点（centerX/topY）临界阻尼（DEV-027），三宽同参 → 形状全程是等比放大的刘海形，尺寸分量各只过冲一次（宽 ≈+3%、高 ≈+1% 行程）。实测 382×309 面板：可见位移 ~0.35s 完成（宽峰值 203ms、高峰值 287ms），子像素尾巴 0.6s 内收干净。内容透明度由引导分量（宽度）的位移进度驱动、进度 60% 即完全不透明（≈0.1s），起手就能看到内容随形状长出来；透明度只作用在 hosting 上，黑底形状始终不透明（DEV-022）。验证节奏别靠肉眼：`ZEROFLOW_NOTCH_TRACE=1` 逐帧打印 `t/dt/topW/h/alpha`，方向反转应该只有 1 次（过冲那一下）、`dt` 无尖峰（有尖峰 = 主线程卡顿，多半是 refit/内容测量）；快速反复看动画用 `ZEROFLOW_NOTCH_SHOW=1`（启动即弹，指针移出不会自动收起）。
+
+## DEV-041: 灵动岛触发方式分叉别只在事件入口判模式，在途的延迟收起回调同样要判
+- **Pitfall:** 加「单击触发」选项后只在 `mouseMoved` 入口 `guard mode == .hover` 挡住悬停逻辑，仍会出现「切到单击模式后，面板被上一次悬停模式留下的延迟收起定时器关掉」——用户什么都没点，面板自己消失。
+- **Cause:** 收起不是即时的：`scheduleHideAfterDelay` 把「延时后仍 visible」的判定放在异步闭包里，闭包触发时模式可能已经切换；入口处已返回的旧回调不受影响。同理 `suppressReshow`（收起后指针仍在热区则不重弹）在单击模式下也无人清理，切回悬停模式后指针停在刘海上会一直不弹。
+- **Prevention:** 模式判定下沉到决策点：异步收起闭包内再校验 `triggerMode == .hover`；`hidePanel` 只在悬停模式下置 `suppressReshow = true`（单击模式无悬停重弹问题，也不该留下永不清除的抑制位）。设置值直接读内存中的 `SettingsStore.shared`，不额外加通知，改设置后下一次交互即按新规则，已弹出的面板不受影响。

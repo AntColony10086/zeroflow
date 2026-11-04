@@ -529,10 +529,30 @@
     "en": "Enable Notch Panel",
     "ja": "ノッチパネルを有効にする"
   },
-  "鼠标悬停或单击屏幕顶部刘海区域，刘海扩大并显示内容模块；点击面板外部或按 Esc 收起。仅支持带刘海的机型。": {
-    "zh-Hans": "鼠标悬停或单击屏幕顶部刘海区域，刘海扩大并显示内容模块；点击面板外部或按 Esc 收起。仅支持带刘海的机型。",
-    "en": "Hover over or click the notch at the top of the screen to expand it and show a content module; click outside the panel or press Esc to dismiss. Only works on Macs with a notch.",
-    "ja": "画面上部のノッチにカーソルを合わせるかクリックすると、ノッチが拡大してコンテンツモジュールを表示します。パネルの外側をクリックするか Esc で閉じます。ノッチ搭載機種のみ対応。"
+  "触发方式": {
+    "zh-Hans": "触发方式",
+    "en": "Trigger",
+    "ja": "トリガー"
+  },
+  "悬停": {
+    "zh-Hans": "悬停",
+    "en": "Hover",
+    "ja": "ホバー"
+  },
+  "点击": {
+    "zh-Hans": "点击",
+    "en": "Click",
+    "ja": "クリック"
+  },
+  "悬停或单击屏幕顶部刘海区域（可在下方选择触发方式），刘海扩大并显示内容模块；点击面板外部或按 Esc 收起。仅支持带刘海的机型。": {
+    "zh-Hans": "悬停或单击屏幕顶部刘海区域（可在下方选择触发方式），刘海扩大并显示内容模块；点击面板外部或按 Esc 收起。仅支持带刘海的机型。",
+    "en": "Hover over or click the notch at the top of the screen (trigger can be chosen below) to expand it and show a content module; click outside the panel or press Esc to dismiss. Only works on Macs with a notch.",
+    "ja": "画面上部のノッチにカーソルを合わせるかクリックすると（トリガーは下で選択できます）、ノッチが拡大してコンテンツモジュールを表示します。パネルの外側をクリックするか Esc で閉じます。ノッチ搭載機種のみ対応。"
+  },
+  "单击刘海区域弹出面板，鼠标移出不会收起；单击面板和刘海以外的区域收起。面板尺寸随当前显示内容自动调整。": {
+    "zh-Hans": "单击刘海区域弹出面板，鼠标移出不会收起；单击面板和刘海以外的区域收起。面板尺寸随当前显示内容自动调整。",
+    "en": "Click the notch to open the panel; moving the mouse away does not dismiss it — click anywhere outside the panel and notch to dismiss. Panel size follows the displayed content.",
+    "ja": "ノッチをクリックするとパネルを表示します。マウスを外しても閉じず、パネルとノッチ以外の場所をクリックすると閉じます。パネルの大きさは表示内容に合わせて自動調整されます。"
   },
   "显示内容": {
     "zh-Hans": "显示内容",
@@ -693,5 +713,150 @@
     "zh-Hans": "核",
     "en": "cores",
     "ja": "コア"
+  },
+  "剪贴板": {
+    "zh-Hans": "剪贴板",
+    "en": "Clipboard",
+    "ja": "クリップボード"
+  },
+  "启用剪贴板历史": {
+    "zh-Hans": "启用剪贴板历史",
+    "en": "Enable clipboard history",
+    "ja": "クリップボード履歴を有効にする"
+  },
+  "开启后，Zeroflow 会记录复制过的文本与图片，按快捷键可随时浏览、搜索并粘贴。关闭后停止记录，已有历史保留。": {
+    "zh-Hans": "开启后，Zeroflow 会记录复制过的文本与图片，按快捷键可随时浏览、搜索并粘贴。关闭后停止记录，已有历史保留。",
+    "en": "When enabled, Zeroflow records copied text and images; press the shortcut to browse, search and paste anytime. Turning it off stops recording but keeps existing history.",
+    "ja": "有効にすると、コピーしたテキストや画像を記録し、ショートカットでいつでも閲覧・検索・貼り付けできます。無効にしても既存の履歴は残ります。"
+  },
+  "剪贴板快捷键": {
+    "zh-Hans": "剪贴板快捷键",
+    "en": "Clipboard shortcut",
+    "ja": "クリップボードのショートカット"
+  },
+  "在任意应用中按下该组合键，即在鼠标位置弹出历史面板。": {
+    "zh-Hans": "在任意应用中按下该组合键，即在鼠标位置弹出历史面板。",
+    "en": "Press this shortcut in any app to open the history panel at the mouse pointer.",
+    "ja": "任意のアプリでこのショートカットを押すと、マウス位置に履歴パネルが表示されます。"
+  },
+  "预览延迟": {
+    "zh-Hans": "预览延迟",
+    "en": "Preview delay",
+    "ja": "プレビュー遅延"
+  },
+  "选中某条记录后停留多久，窗口向可用空间一侧展开并显示完整内容。": {
+    "zh-Hans": "选中某条记录后停留多久，窗口向可用空间一侧展开并显示完整内容。",
+    "en": "How long to dwell on an item before the window expands toward the free side and shows the full content.",
+    "ja": "項目を選択してから、空きのある側へウィンドウが広がり全文を表示するまでの待ち時間です。"
+  },
+  "最多保存条数": {
+    "zh-Hans": "最多保存条数",
+    "en": "Maximum items",
+    "ja": "保存件数の上限"
+  },
+  "清空历史记录": {
+    "zh-Hans": "清空历史记录",
+    "en": "Clear history",
+    "ja": "履歴を消去"
+  },
+  "历史": {
+    "zh-Hans": "历史",
+    "en": "History",
+    "ja": "履歴"
+  },
+  "文本与图片共用该上限，超出后自动删除最旧记录；图片保存在 ~/Library/Application Support/zeroflow/clipboard-images。密码管理器等标记为机密的剪贴板内容不会被记录。": {
+    "zh-Hans": "文本与图片共用该上限，超出后自动删除最旧记录；图片保存在 ~/Library/Application Support/zeroflow/clipboard-images。密码管理器等标记为机密的剪贴板内容不会被记录。",
+    "en": "Text and images share this limit; the oldest entries are removed automatically. Images are stored in ~/Library/Application Support/zeroflow/clipboard-images. Content marked as concealed by password managers is never recorded.",
+    "ja": "テキストと画像でこの上限を共有し、超えた分は古い順に削除されます。画像は ~/Library/Application Support/zeroflow/clipboard-images に保存されます。パスワードマネージャーなどが機密としてマークした内容は記録しません。"
+  },
+  "清空剪贴板历史？": {
+    "zh-Hans": "清空剪贴板历史？",
+    "en": "Clear clipboard history?",
+    "ja": "クリップボード履歴を消去しますか？"
+  },
+  "清空": {
+    "zh-Hans": "清空",
+    "en": "Clear",
+    "ja": "消去"
+  },
+  "取消": {
+    "zh-Hans": "取消",
+    "en": "Cancel",
+    "ja": "キャンセル"
+  },
+  "将删除全部文本与图片记录，此操作不可撤销。": {
+    "zh-Hans": "将删除全部文本与图片记录，此操作不可撤销。",
+    "en": "All text and image entries will be deleted. This cannot be undone.",
+    "ja": "すべてのテキストと画像の記録を削除します。この操作は取り消せません。"
+  },
+  "需要「辅助功能」权限才能把选中内容自动粘贴到当前窗口": {
+    "zh-Hans": "需要「辅助功能」权限才能把选中内容自动粘贴到当前窗口",
+    "en": "Accessibility permission is required to paste the selected item into the current window",
+    "ja": "選択した内容を現在のウィンドウに自動で貼り付けるには「アクセシビリティ」権限が必要です"
+  },
+  "未授权时，选中记录只会复制到剪贴板，仍需手动按 ⌘V。": {
+    "zh-Hans": "未授权时，选中记录只会复制到剪贴板，仍需手动按 ⌘V。",
+    "en": "Without permission, selecting an item only copies it to the clipboard; press ⌘V manually.",
+    "ja": "権限がない場合、選択した内容はクリップボードにコピーされるだけで、手動で ⌘V を押す必要があります。"
+  },
+  "搜索剪贴板历史": {
+    "zh-Hans": "搜索剪贴板历史",
+    "en": "Search clipboard history",
+    "ja": "クリップボード履歴を検索"
+  },
+  "↑↓ 选择 · ↵ 粘贴 · esc 关闭": {
+    "zh-Hans": "↑↓ 选择 · ↵ 粘贴 · esc 关闭",
+    "en": "↑↓ select · ↵ paste · esc close",
+    "ja": "↑↓ 選択 · ↵ 貼り付け · esc 閉じる"
+  },
+  "未授予辅助功能权限：选中仅复制到剪贴板": {
+    "zh-Hans": "未授予辅助功能权限：选中仅复制到剪贴板",
+    "en": "No accessibility permission: selecting only copies to the clipboard",
+    "ja": "アクセシビリティ権限がありません：選択してもコピーのみ"
+  },
+  "图片": {
+    "zh-Hans": "图片",
+    "en": "Image",
+    "ja": "画像"
+  },
+  "文本": {
+    "zh-Hans": "文本",
+    "en": "Text",
+    "ja": "テキスト"
+  },
+  "行": {
+    "zh-Hans": "行",
+    "en": "lines",
+    "ja": "行"
+  },
+  "未知来源": {
+    "zh-Hans": "未知来源",
+    "en": "Unknown source",
+    "ja": "不明なアプリ"
+  },
+  "暂无剪贴板历史": {
+    "zh-Hans": "暂无剪贴板历史",
+    "en": "No clipboard history",
+    "ja": "クリップボード履歴はありません"
+  },
+  "复制文本或图片后会出现在这里": {
+    "zh-Hans": "复制文本或图片后会出现在这里",
+    "en": "Copied text and images will appear here",
+    "ja": "コピーしたテキストや画像がここに表示されます"
+  },
+  "图片已不可用": {
+    "zh-Hans": "图片已不可用",
+    "en": "Image is no longer available",
+    "ja": "画像は利用できなくなりました"
+  },
+  "没有匹配的记录": {
+    "zh-Hans": "没有匹配的记录",
+    "en": "No matching entries",
+    "ja": "一致する記録がありません"
+  },
+  "试试其他关键词": {
+    "zh-Hans": "试试其他关键词",
+    "en": "Try another keyword",
+    "ja": "別のキーワードをお試しください"
   }
 }

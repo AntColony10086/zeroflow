@@ -8,6 +8,10 @@ import CoreGraphics
 /// 面板内双指左右滑动循环切换。
 /// 形状/动画细节见 NotchPanel 类文档。
 ///
+/// 触发方式（设置项 notchTriggerMode）：
+/// - hover（旧行为）：悬停延时弹出，移出后按延时收起；单击也立即弹出。
+/// - click：只由单击刘海弹出，鼠标移出不收起；单击刘海以外区域才收起。
+///
 /// 实现要点（结构仿 `DockHoverPreviewController`）：
 /// - listen-only CGEventTap 监听 mouseMoved / mouseDown / keyDown，绝不吞事件：
 ///   刘海热区只是几何判定（不依赖热区窗收事件），菜单栏图标点击、Esc 等原生行为零影响。
@@ -27,6 +31,9 @@ final class NotchHotspotController {
 
     private static let debug = ProcessInfo.processInfo.environment["ZEROFLOW_NOTCH_DEBUG"] == "1"
     private static let fakeNotch = ProcessInfo.processInfo.environment["ZEROFLOW_NOTCH_FAKE"] == "1"
+    /// `ZEROFLOW_NOTCH_SHOW=1`：启动 1.5s 后直接弹出面板（绕过悬停，调动画用）；
+    /// 该模式下指针移出不会自动收起（否则鼠标一动面板就没了），Esc / 区域外点击仍可收起
+    private static let autoShow = ProcessInfo.processInfo.environment["ZEROFLOW_NOTCH_SHOW"] == "1"
 
     /// 热区对刘海的左右外扩
     private static let hotspotMargin: CGFloat = 12
@@ -36,6 +43,10 @@ final class NotchHotspotController {
     }
     /// 保活判定对 热区/面板 的外扩：吞掉两者之间的缝隙，慢速移动不掉出保活区
     private static let keepAliveInset: CGFloat = 6
+    /// 当前触发方式（直接读内存中的设置，改设置后下一次交互即按新规则）
+    private static var triggerMode: NotchTriggerMode {
+        SettingsStore.shared.notchTriggerMode
+    }
     /// move 事件处理节流间隔（s）：几何判定足够快，但没必要每个 HID 事件都跑
     private static let moveThrottle: CFTimeInterval = 0.016
     /// Esc 键码
@@ -131,6 +142,14 @@ final class NotchHotspotController {
         thread = t
         t.start()
         ZSLog("Notch: started")
+
+        if Self.autoShow {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { [weak self] in
+                guard let self, self.isRunning else { return }
+                ZSLog("Notch: auto show (ZEROFLOW_NOTCH_SHOW)")
+                self.openNow()
+            }
+        }
     }
 
     private func stop() {
@@ -267,6 +286,7 @@ final class NotchHotspotController {
     // MARK: - 状态机（tap 线程决策，workQueue/主线程执行）
 
     private func handleMouseMoved(_ point: CGPoint) {
+        guard !Self.autoShow, Self.triggerMode == .hover else { return }
         lock.lock()
         let now = CFAbsoluteTimeGetCurrent()
         if now - lastMoveProcessedAt < Self.moveThrottle {
@@ -366,7 +386,8 @@ final class NotchHotspotController {
         workQueue.asyncAfter(deadline: .now() + Self.configuredDelay) { [weak self] in
             guard let self else { return }
             self.lock.lock()
-            let live = gen == self.hideGen && self.phase == .visible && self.pendingShowGen == nil
+            let live = gen == self.hideGen && self.phase == .visible
+                && self.pendingShowGen == nil && Self.triggerMode == .hover
             self.lock.unlock()
             guard live else { return }
             self.hidePanel(reason: "left hotspot+panel region")
@@ -445,7 +466,8 @@ final class NotchHotspotController {
         phase = .idle
         pendingShowGen = nil
         panelFrameTL = nil
-        suppressReshow = true
+        // 单击模式下悬停不生效，不设重弹抑制（否则切回悬停后指针还在热区内会一直不弹）
+        suppressReshow = Self.triggerMode == .hover
         showGen += 1
         hideGen += 1
         lock.unlock()

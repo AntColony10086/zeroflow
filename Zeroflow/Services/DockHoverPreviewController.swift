@@ -23,6 +23,9 @@ import CoreGraphics
 ///   Dock 重启 / 任意按键 / 屏幕配置变化。
 /// - 快路径命中失败或缓存无效时，pending 定时器照常触发并走权威命中，因此缓存仅是
 ///   「相邻图标重定向」的优化项，不是正确性依赖。
+/// - 自动隐藏 Dock：AX 给的是「隐藏位」坐标（整条落到屏幕边之外，比展开位低一条 Dock 高），
+///   条带因此统一先吸附到最近的屏幕边再用于触发/闸门；权威命中失败时在 Dock 落位前短期
+///   重试（指针停住后不再有 move 事件，只能自己轮询）。
 final class DockHoverPreviewController {
     static let shared = DockHoverPreviewController()
 
@@ -34,6 +37,11 @@ final class DockHoverPreviewController {
     /// 触发/闸门对 Dock 条带 bbox 的外扩：触发稍早于进入，闸门拦截条带外的误命中（如放大图标的「空气区」）
     private static let stripTriggerMargin: CGFloat = 30
     private static let stripGateMargin: CGFloat = 16
+    /// 闸门对「命中项自身 frame」的外扩容差：命中项就在指针下，只需微宽容差
+    private static let resolvedItemGateSlack: CGFloat = 4
+    /// 权威命中失败后的短期重试（自动隐藏 Dock 的展开动画竞态）：间隔与总窗口（s）
+    private static let resolveRetryInterval: TimeInterval = 0.12
+    private static let resolveRetryWindow: TimeInterval = 1.2
     /// 条带不可用时的边缘兜底触发宽度
     private static let edgeFallbackMargin: CGFloat = 150
     /// visible 后移出 图标∪面板(外扩) 的隐藏宽限（s）：给鼠标移向面板留时间
@@ -99,6 +107,8 @@ final class DockHoverPreviewController {
     /// Dock 右键菜单打开期间的预览抑制：期间不调度/弹出预览，探针确认菜单关闭后自动解除
     private var contextMenuGuardActive = false
     private var lastMenuProbeAt = CFTimeInterval(0)
+    /// 权威命中失败的短期重试截止时刻（nil = 未在重试）
+    private var retryDeadline: CFTimeInterval?
 
     // 主线程专用
     private var currentTarget: HoverTarget?
@@ -444,7 +454,7 @@ final class DockHoverPreviewController {
     /// 不用 isNearDockStrip 的屏幕边缘兜底——屏幕中部右键不应进入抑制。
     private func isDockMenuLaunchZone(_ point: CGPoint) -> Bool {
         if cachedItem(at: point) != nil { return true }
-        if let zone = (dockBarFrameTL() ?? dockStripTL())?.insetBy(dx: -Self.stripTriggerMargin, dy: -Self.stripTriggerMargin) {
+        if let zone = dockRegionTL(margin: Self.stripTriggerMargin) {
             return zone.contains(point)
         }
         return false
@@ -536,6 +546,7 @@ final class DockHoverPreviewController {
         showGen += 1
         let g = showGen
         pendingShowGen = g
+        retryDeadline = nil
         if phase == .idle { phase = .pending }
         lock.unlock()
         workQueue.asyncAfter(deadline: .now() + delay) { [weak self] in
@@ -580,6 +591,7 @@ final class DockHoverPreviewController {
         panelFrameTL = nil
         suppressKey = nil
         suppressRegionTL = nil
+        retryDeadline = nil
         showGen += 1
         lock.unlock()
         ZSLog("DockHoverPreview: hide (\(reason))")
@@ -624,7 +636,7 @@ final class DockHoverPreviewController {
         }()
         // 兜底：抑制期间到达的在途 show 一律不放行
         if isContextMenuGuarded() {
-            failResolve(showGen: g, reason: "dock context menu open")
+            failResolve(showGen: g, reason: "dock context menu open", retryable: false)
             return
         }
         let target: HoverTarget
@@ -652,10 +664,16 @@ final class DockHoverPreviewController {
             failResolve(showGen: g, reason: "point is not a dock item")
             return
         }
-        // 位置闸门：指针必须确实在 Dock 条带附近，防止放大图标的「空气区」/远处误命中导致过早弹出
-        if let gate = dockBarFrameTL() ?? dockStripTL(),
-           !gate.insetBy(dx: -Self.stripGateMargin, dy: -Self.stripGateMargin).contains(point) {
-            ZSLog("DockHoverPreview: gate reject pt=\(point) strip=\(gate)")
+        // 位置闸门：优先用「AX 权威命中到的图标自身 frame」（实时、不受 Dock 隐藏位影响），
+        // 条带（已按自动隐藏吸附回屏幕边）仅作兜底，防止放大图标的「空气区」/远处误命中
+        if Self.debug {
+            let bar = dockBarFrameTL().map { "\($0)" } ?? "nil"
+            let region = dockRegionTL(margin: Self.stripGateMargin).map { "\($0)" } ?? "nil"
+            ZSLog("DockHoverPreview: resolve pt=\(point) item=\(target.frameTL) bar=\(bar) region=\(region)")
+        }
+        let onResolvedItem = target.frameTL.insetBy(dx: -Self.resolvedItemGateSlack, dy: -Self.resolvedItemGateSlack).contains(point)
+        if !onResolvedItem, let gate = dockRegionTL(margin: Self.stripGateMargin), !gate.contains(point) {
+            if Self.debug { ZSLog("DockHoverPreview: gate reject pt=\(point) strip=\(gate)") }
             failResolve(showGen: g, reason: "pointer outside dock strip")
             return
         }
@@ -667,21 +685,25 @@ final class DockHoverPreviewController {
         }
         lock.unlock()
         if suppressed {
-            failResolve(showGen: g, reason: "suppressed after activate")
+            failResolve(showGen: g, reason: "suppressed after activate", retryable: false)
             return
         }
         let windows = windows(for: target)
         guard !windows.isEmpty else {
-            failResolve(showGen: g, reason: "target has no windows")
+            failResolve(showGen: g, reason: "target has no windows", retryable: false)
             return
         }
+        syncDockCache(with: target)
         DispatchQueue.main.async { [weak self] in
             self?.present(windows: windows, target: target, showGen: g, pointer: point)
         }
     }
 
-    /// 权威命中失败/无窗口：回到 idle；面板已开着则收起
-    private func failResolve(showGen g: Int, reason: String) {
+    /// 权威命中失败/无窗口：指针仍在 Dock 区域内且 Dock 尚未落位时先短期重试
+    /// （自动隐藏 Dock 的展开动画中图标坐标/命中结果还在变，而指针停住不再产生
+    /// mouseMoved），重试用尽才回到 idle；面板已开着则在回 idle 时收起。
+    private func failResolve(showGen g: Int, reason: String, retryable: Bool = true) {
+        if retryable, scheduleResolveRetry(showGen: g, reason: reason) { return }
         lock.lock()
         let wasVisible = phase == .visible
         if g == self.showGen {
@@ -689,6 +711,7 @@ final class DockHoverPreviewController {
             hoverItemID = nil
             currentItemTL = nil
             panelFrameTL = nil
+            retryDeadline = nil
             showGen += 1
             pendingShowGen = nil
         }
@@ -698,6 +721,72 @@ final class DockHoverPreviewController {
         } else {
             ZSLog("DockHoverPreview: resolve failed (\(reason))")
         }
+    }
+
+    /// 是否值得短期重试：指针仍在 Dock 区域附近，且 Dock 还没完全落位（自动隐藏的展开动画）——
+    /// 这两条同时成立时失败是时序竞态，不是「指针真的不在图标上」。
+    private func scheduleResolveRetry(showGen g: Int, reason: String) -> Bool {
+        lock.lock()
+        let point = lastMousePoint
+        lock.unlock()
+        guard isNearDockStrip(point), !isDockSettled() else { return false }
+
+        let now = CFAbsoluteTimeGetCurrent()
+        lock.lock()
+        guard g == self.showGen, pendingShowGen == nil else { lock.unlock(); return false }
+        // 首次重试才开始计时窗口，后续沿用同一 deadline
+        let deadline = retryDeadline ?? (now + Self.resolveRetryWindow)
+        retryDeadline = deadline
+        let hasBudget = now < deadline
+        lock.unlock()
+        guard hasBudget else { return false }
+
+        if Self.debug { ZSLog("DockHoverPreview: resolve retry (\(reason))") }
+        workQueue.asyncAfter(deadline: .now() + Self.resolveRetryInterval) { [weak self] in
+            guard let self else { return }
+            self.lock.lock()
+            let live = g == self.showGen && self.pendingShowGen == nil
+            self.lock.unlock()
+            guard live else { return }
+            self.resolveAndShow(showGen: g)
+        }
+        return true
+    }
+
+    /// Dock 是否已完全落位（主窗口框几乎全部在屏内）：自动隐藏的展开动画期间为 false
+    private func isDockSettled() -> Bool {
+        guard let bar = dockBarFrameTL(), let screen = nearestScreenTL(to: bar) else { return false }
+        let inter = screen.intersection(bar)
+        guard !inter.isNull, bar.width > 0, bar.height > 0 else { return false }
+        return inter.width * inter.height >= bar.width * bar.height * 0.95
+    }
+
+    /// 权威命中的图标坐标与缓存不一致时（自动隐藏 Dock 展开前后 AX 坐标整体位移几十点），
+    /// 触发防抖重建；否则快路径命中与「可见时换图标」判定会一直用隐藏位坐标。
+    private func syncDockCache(with target: HoverTarget) {
+        let frame = target.frameTL
+        let key = suppressKey(for: target)
+        lock.lock()
+        var stale = false
+        if !cacheInvalid {
+            for item in dockItems where dockItemKey(item) == key {
+                if abs(item.frame.minX - frame.minX) > 1 || abs(item.frame.minY - frame.minY) > 1
+                    || abs(item.frame.width - frame.width) > 1 || abs(item.frame.height - frame.height) > 1 {
+                    stale = true
+                }
+            }
+        }
+        lock.unlock()
+        guard stale else { return }
+        if Self.debug { ZSLog("DockHoverPreview: cache geometry stale, rebuild") }
+        dockLayoutMayHaveChanged()
+    }
+
+    private func dockItemKey(_ item: DockItem) -> String {
+        if let app = item.app {
+            return "app:\(app.bundleIdentifier ?? "pid:\(app.processIdentifier)")"
+        }
+        return "tile:\(item.title)"
     }
 
     /// 目标 → 窗口列表（与 ⌘⇥ 切换器同源；无窗口 app 返回空 → 不弹）
@@ -740,6 +829,7 @@ final class DockHoverPreviewController {
         }
         phase = .visible
         currentItemTL = target.frameTL
+        retryDeadline = nil
         // 同图标内移动走保活，不再误判为换目标；缓存无效时为 nil，靠 anchorFrame 保活
         hoverItemID = anchorItemID
         lock.unlock()
@@ -1198,10 +1288,47 @@ final class DockHoverPreviewController {
     /// 对齐 DockClickMinimizer 的思路：只有真正接近 Dock 本体才参与判定，
     /// 而不是「靠近屏幕任意边缘」——后者会导致从上方接近时过早触发、在屏幕中部误触发。
     private func isNearDockStrip(_ point: CGPoint) -> Bool {
-        if let zone = (dockBarFrameTL() ?? dockStripTL())?.insetBy(dx: -Self.stripTriggerMargin, dy: -Self.stripTriggerMargin) {
+        if let zone = dockRegionTL(margin: Self.stripTriggerMargin) {
             return zone.contains(point)
         }
         return isNearDockEdgeFallback(point)
+    }
+
+    /// Dock 可交互条带（AX 左上原点，含外扩 margin）。
+    /// **自动隐藏时 Dock 的 AX 坐标是「隐藏位」（整条落到屏幕边之外）**，直接用会让触发区/
+    /// 闸门整体下移几十点（表现为停在图标上就是不弹、只有屏幕最底一条缝能弹），
+    /// 因此统一先把条带吸附到最近的屏幕边再外扩。左/右 Dock 同理吸附到左/右边。
+    private func dockRegionTL(margin: CGFloat) -> CGRect? {
+        guard let rect = dockBarFrameTL() ?? dockStripTL() else { return nil }
+        return snapToScreenEdge(rect).insetBy(dx: -margin, dy: -margin)
+    }
+
+    /// 把 Dock 条带吸附到最近的屏幕边：横向排布贴底边，纵向排布贴左/右边。
+    /// 已落位的条带吸附后位置不变（幂等），只有隐藏位/动画中的条带会被拉回屏幕内。
+    private func snapToScreenEdge(_ rect: CGRect) -> CGRect {
+        guard let screen = nearestScreenTL(to: rect) else { return rect }
+        if rect.width >= rect.height {
+            return CGRect(x: rect.minX, y: screen.maxY - rect.height, width: rect.width, height: rect.height)
+        }
+        let onLeft = rect.midX < screen.midX
+        return CGRect(x: onLeft ? screen.minX : screen.maxX - rect.width,
+                      y: rect.minY, width: rect.width, height: rect.height)
+    }
+
+    /// 与 rect 最近的屏幕（左上原点；已相交时距离为 0），用于把隐藏位条带吸回正确的屏幕
+    private func nearestScreenTL(to rect: CGRect) -> CGRect? {
+        var best: (frame: CGRect, distance: CGFloat)?
+        for screen in NSScreen.screens {
+            let frame = topLeftFrame(of: screen)
+            var distance: CGFloat = 0
+            if frame.intersection(rect).isNull {
+                let dx = max(0, max(frame.minX - rect.maxX, rect.minX - frame.maxX))
+                let dy = max(0, max(frame.minY - rect.maxY, rect.minY - frame.maxY))
+                distance = hypot(dx, dy)
+            }
+            if best == nil || distance < best!.distance { best = (frame, distance) }
+        }
+        return best?.frame
     }
 
     /// 兕底触发区：屏幕底/左/右边缘 150pt（不含顶部，避免菜单栏区参与判定）。

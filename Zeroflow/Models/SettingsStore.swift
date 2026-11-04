@@ -7,6 +7,12 @@ extension Notification.Name {
     static let zeroflowFinderNewFileDidChange = Notification.Name("zeroflow.finderNewFileDidChange")
 }
 
+/// 灵动岛触发方式：悬停刘海弹出（移出延时收起） / 单击刘海弹出（点击刘海以外收起）
+enum NotchTriggerMode: String, CaseIterable {
+    case hover
+    case click
+}
+
 /// 设置持久化存储。M0 只负责存取，不接入真实全局热键。
 final class SettingsStore: ObservableObject {
     static let shared = SettingsStore()
@@ -33,10 +39,16 @@ final class SettingsStore: ObservableObject {
         static let finderCmdCommand = "finderCmdCommand"
         static let notchEnabled = "notchEnabled"
         static let notchHoverDelayMs = "notchHoverDelayMs"
+        static let notchTriggerMode = "notchTriggerMode"
         static let notchShowCalendar = "notchShowCalendar"
         static let notchShowResources = "notchShowResources"
         static let notchShowMusic = "notchShowMusic"
         static let notchResourceItems = "notchResourceItems"
+        static let clipboardEnabled = "clipboardEnabled"
+        static let clipboardShortcutKeyCode = "clipboardShortcut.keyCode"
+        static let clipboardShortcutModifiers = "clipboardShortcut.modifiers"
+        static let clipboardPreviewDelayMs = "clipboardPreviewDelayMs"
+        static let clipboardMaxItems = "clipboardMaxItems"
     }
 
     private let defaults: UserDefaults
@@ -109,10 +121,16 @@ final class SettingsStore: ObservableObject {
             Keys.finderCmdCommand: Self.defaultFinderCmdCommand,
             Keys.notchEnabled: false,
             Keys.notchHoverDelayMs: 200,
+            Keys.notchTriggerMode: NotchTriggerMode.click.rawValue,
             Keys.notchShowCalendar: true,
             Keys.notchShowResources: false,
             Keys.notchShowMusic: false,
             Keys.notchResourceItems: NotchResourceItem.allRawValues,
+            Keys.clipboardEnabled: false,
+            Keys.clipboardShortcutKeyCode: Int(ShortcutKey.clipboardDefault.keyCode),
+            Keys.clipboardShortcutModifiers: Int(ShortcutKey.clipboardDefault.modifiers.rawValue),
+            Keys.clipboardPreviewDelayMs: 1000,
+            Keys.clipboardMaxItems: 100,
         ])
         _launchAtLogin = Published(initialValue: defaults.bool(forKey: Keys.launchAtLogin))
         _saveDirectory = Published(initialValue: defaults.string(forKey: Keys.saveDirectory) ?? Self.defaultSaveDirectory)
@@ -130,6 +148,7 @@ final class SettingsStore: ObservableObject {
         _finderCmdCommand = Published(initialValue: defaults.string(forKey: Keys.finderCmdCommand) ?? Self.defaultFinderCmdCommand)
         _notchEnabled = Published(initialValue: defaults.bool(forKey: Keys.notchEnabled))
         _notchHoverDelayMs = Published(initialValue: defaults.integer(forKey: Keys.notchHoverDelayMs))
+        _notchTriggerMode = Published(initialValue: NotchTriggerMode(rawValue: defaults.string(forKey: Keys.notchTriggerMode) ?? "") ?? .click)
         _notchShowCalendar = Published(initialValue: defaults.bool(forKey: Keys.notchShowCalendar))
         _notchShowResources = Published(initialValue: defaults.bool(forKey: Keys.notchShowResources))
         _notchShowMusic = Published(initialValue: defaults.bool(forKey: Keys.notchShowMusic))
@@ -139,6 +158,10 @@ final class SettingsStore: ObservableObject {
         }())
         _shortcut = Published(initialValue: Self.loadShortcut(from: defaults))
         _cmdTabShortcut = Published(initialValue: Self.loadCmdTabShortcut(from: defaults))
+        _clipboardShortcut = Published(initialValue: Self.loadClipboardShortcut(from: defaults))
+        _clipboardEnabled = Published(initialValue: defaults.bool(forKey: Keys.clipboardEnabled))
+        _clipboardPreviewDelayMs = Published(initialValue: defaults.integer(forKey: Keys.clipboardPreviewDelayMs))
+        _clipboardMaxItems = Published(initialValue: defaults.integer(forKey: Keys.clipboardMaxItems))
         _appLanguage = Published(initialValue: AppLanguage(rawValue: defaults.string(forKey: Keys.appLanguage) ?? "") ?? .system)
         ensureDefaultDirectoryExists()
         // 用本次加载的真实值补齐 group container 共享文件（didSet 只在变更时触发）
@@ -191,6 +214,15 @@ final class SettingsStore: ObservableObject {
         case ShortcutKey.optionGraveDefault.keyCode: return .optionGraveDefault
         default: return .cmdTabDefault
         }
+    }
+
+    private static func loadClipboardShortcut(from defaults: UserDefaults) -> ShortcutKey {
+        loadShortcut(from: defaults,
+                     keyCodeKey: Keys.clipboardShortcutKeyCode,
+                     modifiersKey: Keys.clipboardShortcutModifiers,
+                     defaultKeyCode: ShortcutKey.clipboardDefault.keyCode,
+                     defaultModifiers: UInt(ShortcutKey.clipboardDefault.modifiers.rawValue),
+                     defaultCharacter: ShortcutKey.clipboardDefault.character)
     }
 
     private static func loadShortcut(from defaults: UserDefaults,
@@ -427,10 +459,17 @@ final class SettingsStore: ObservableObject {
         }
     }
 
-    /// 悬停刘海多久后弹出面板（毫秒）；单击刘海可立即弹出
+    /// 悬停刘海多久后弹出面板（毫秒）；单击刘海可立即弹出。单击触发模式下不生效
     @Published var notchHoverDelayMs: Int {
         didSet {
             defaults.set(notchHoverDelayMs, forKey: Keys.notchHoverDelayMs)
+        }
+    }
+
+    /// 触发方式：悬停 / 单击。改动即时生效，已弹出的面板保持当前状态直到下次交互
+    @Published var notchTriggerMode: NotchTriggerMode {
+        didSet {
+            defaults.set(notchTriggerMode.rawValue, forKey: Keys.notchTriggerMode)
         }
     }
 
@@ -474,6 +513,46 @@ final class SettingsStore: ObservableObject {
         }
     }
 
+    // MARK: - 剪贴板历史
+
+    @Published var clipboardEnabled: Bool {
+        didSet {
+            defaults.set(clipboardEnabled, forKey: Keys.clipboardEnabled)
+            NotificationCenter.default.post(
+                name: ClipboardMonitor.didChangeNotification,
+                object: nil,
+                userInfo: ["enabled": clipboardEnabled]
+            )
+        }
+    }
+
+    @Published var clipboardShortcut: ShortcutKey {
+        didSet {
+            defaults.set(Int(clipboardShortcut.keyCode), forKey: Keys.clipboardShortcutKeyCode)
+            defaults.set(Int(clipboardShortcut.modifiers.rawValue), forKey: Keys.clipboardShortcutModifiers)
+            NotificationCenter.default.post(
+                name: GlobalHotkeyManager.clipboardShortcutDidChangeNotification,
+                object: nil,
+                userInfo: ["shortcut": clipboardShortcut]
+            )
+        }
+    }
+
+    /// 选中某条记录后停留多久展开完整预览（毫秒）
+    @Published var clipboardPreviewDelayMs: Int {
+        didSet {
+            defaults.set(clipboardPreviewDelayMs, forKey: Keys.clipboardPreviewDelayMs)
+        }
+    }
+
+    /// 最多保存条数（文本与图片共用，裁剪时删图片文件）
+    @Published var clipboardMaxItems: Int {
+        didSet {
+            defaults.set(clipboardMaxItems, forKey: Keys.clipboardMaxItems)
+            ClipboardHistoryStore.shared.trimToLimit()
+        }
+    }
+
     // MARK: - 语言
 
     @Published var appLanguage: AppLanguage {
@@ -507,5 +586,9 @@ final class SettingsStore: ObservableObject {
 
     func resetShortcutToDefault() {
         shortcut = .standard
+    }
+
+    func resetClipboardShortcutToDefault() {
+        clipboardShortcut = .clipboardDefault
     }
 }
