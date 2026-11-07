@@ -207,3 +207,9 @@
 - **Pitfall:** 加「单击触发」选项后只在 `mouseMoved` 入口 `guard mode == .hover` 挡住悬停逻辑，仍会出现「切到单击模式后，面板被上一次悬停模式留下的延迟收起定时器关掉」——用户什么都没点，面板自己消失。
 - **Cause:** 收起不是即时的：`scheduleHideAfterDelay` 把「延时后仍 visible」的判定放在异步闭包里，闭包触发时模式可能已经切换；入口处已返回的旧回调不受影响。同理 `suppressReshow`（收起后指针仍在热区则不重弹）在单击模式下也无人清理，切回悬停模式后指针停在刘海上会一直不弹。
 - **Prevention:** 模式判定下沉到决策点：异步收起闭包内再校验 `triggerMode == .hover`；`hidePanel` 只在悬停模式下置 `suppressReshow = true`（单击模式无悬停重弹问题，也不该留下永不清除的抑制位）。设置值直接读内存中的 `SettingsStore.shared`，不额外加通知，改设置后下一次交互即按新规则，已弹出的面板不受影响。
+
+## DEV-042: 卡片切换滑动过渡：进度必须分两轮推、SwiftUI 侧用 onChange+withAnimation 显式触发
+- **Pitfall:** 想在 `NSHostingView` 里做「旧卡滑出 / 新卡滑入」：切换时一次把 `rootView` 换成终态（新卡居中），或者在同一轮主线程里把 `slideProgress` 从 0 改成 1 再重建内容视图，结果只是一次瞬间替换，看不到任何过渡；`.animation(Self.slideAnimation, value: slideProgress)` 也不动。
+- **Cause:** ① 0 与 1 落在同一次 SwiftUI 更新事务里会被合并成终态，「跳变」从未发生，任何基于 value 变化的隐式动画都无从触发；② `hosting.rootView` 整体换成另一个 view 值会换身份，隐式动画不跨身份插值；③ 旧卡若按新布局重排（列宽/内容高跟着变），滑动过程中还会变形。
+- **Prevention:** 分两轮：切换入口先 `slideProgress = 0` 并重建（起手帧真的上屏），`DispatchQueue.main.async` 后再置 1 且**只覆盖 `hosting.rootView`**（`updateContentView`，保留 SwiftUI 身份与在途动画；`refit` 同理，重建会打断过渡）。SwiftUI 侧把插值交给 `@State animatedProgress` + `.onChange(of: slideProgress) { _, new in withAnimation(Self.slideAnimation) { animatedProgress = new } }`，所有 offset 都从 `progress = animatedProgress ?? slideProgress` 派生。旧卡用「切换前几何」原样渲染（`CardSlide` 带 card/contentHeight/scale，列宽由卡宽反推），两边 offset 反向外移（`±step * slideTravel * progress`），行程取两张卡较宽者 + 24，容器 `.clipped()` 裁在**卡片区**而不是整块面板。方向语义：step = -1（上一张）旧卡向右出、新卡自左入。
+- **Note（本机验证手段）:** 这个环境里 `AXIsProcessTrusted()` 为 false，脚本点不了箭头；`screencapture` 与 `CGWindowListCreateImage` 都只返回空白/白图（缺屏幕录制权限），逐帧抓屏对比也不可行。要肉眼验证就用 `ZEROFLOW_NOTCH_SHOW=1` 起一个临时实例手动点箭头，别把「定时器自动切卡」这类测试钩子留在代码里。

@@ -261,7 +261,15 @@ struct NotchContentView: View {
     /// 紧凑密度：卡片高装不下常规密度时整体切换（资源行单行化、字号/间距/网格收紧），
     /// 目标是自然高≈卡片内高、scale≈1；仍装不下再等比缩小兜底
     var compactMode: Bool = false
+    /// 卡片切换滑动过渡（左右箭头 / 双指左右滑动）：旧卡按切换前几何滑出、新卡自另一侧滑入；
+    /// nil = 无过渡（present / 日程加载 refit）
+    var slide: CardSlide? = nil
+    /// 滑动进度：0 = 起手帧（新卡停在卡片区外），1 = 落定；无过渡时恒 1
+    var slideProgress: CGFloat = 1
 
+    /// 滑动动画中的实际进度（nil = 直接跟 slideProgress；滑动开始时由 onChange 触发
+    /// withAnimation 0→1，偏移量走弹簧插值，不依赖根视图替换时的隐式动画）
+    @State private var animatedProgress: CGFloat?
     @ObservedObject private var resources = SystemResourceMonitor.shared
     @ObservedObject private var music = NowPlayingMonitor.shared
 
@@ -311,6 +319,17 @@ struct NotchContentView: View {
         case music
     }
 
+    /// 卡片切换滑动参数：旧模块 + 切换前布局几何 + 方向。
+    /// step = -1（上一张）：旧卡向右滑出、新卡自左滑入；step = +1（下一张）：反向。
+    /// 旧卡沿用当前密度（compactMode 只在极矮屏幕上才切换，不随切换抖动）
+    struct CardSlide {
+        let from: Module
+        let step: Int
+        let fromCard: CGSize
+        let fromContentHeight: CGFloat
+        let fromScale: CGFloat
+    }
+
     var body: some View {
         if displayWidth == nil {
             measureBody
@@ -356,7 +375,7 @@ struct NotchContentView: View {
     /// 测量模式：单个模块卡的自然尺寸（不含面板内边距与顶部条）
     @ViewBuilder private var measureBody: some View {
         let module = modulesOverride ?? .calendar
-        moduleView(module)
+        moduleView(module, inner: effectiveColumnWidth(Self.naturalColumnWidth(for: module)))
             .padding(.horizontal, Self.cardPadding)
             .padding(.vertical, Self.cardVPadding)
             .background(cardBackground)
@@ -373,17 +392,46 @@ struct NotchContentView: View {
         .frame(width: displayWidth, height: displayHeight, alignment: .top)
     }
 
-    @ViewBuilder private var contentSlot: some View {
-        if let module = displayModule {
-            renderedCard(module)
-        } else {
-            // 空状态：卡片固定尺寸（内容只有一行提示+按钮，缩成小条不好点）
-            emptyState
-                .padding(.vertical, Self.cardVPadding)
-                .frame(width: max(1, cardSize.width), height: max(1, cardSize.height))
-                .background(cardBackground)
-                .frame(height: cardSlotHeight)
+    /// 内容卡槽：卡片区（滑动过渡时旧卡与新卡同时在场，按 progress 反向外移；
+    /// 裁出卡片区边界，滑出去的部分不落到面板留白上）
+    private var contentSlot: some View {
+        ZStack {
+            if let slide {
+                cardBody(slide.from,
+                         inner: Self.columnWidth(forCardWidth: slide.fromCard.width),
+                         card: slide.fromCard,
+                         contentHeight: slide.fromContentHeight,
+                         scale: slide.fromScale)
+                    .offset(x: -CGFloat(slide.step) * slideTravel * progress)
+            }
+            if let module = displayModule {
+                renderedCard(module)
+                    .offset(x: CGFloat(slide?.step ?? 0) * slideTravel * (1 - progress))
+            } else {
+                // 空状态：卡片固定尺寸（内容只有一行提示+按钮，缩成小条不好点）
+                emptyState
+                    .padding(.vertical, Self.cardVPadding)
+                    .frame(width: max(1, cardSize.width), height: max(1, cardSize.height))
+                    .background(cardBackground)
+                    .frame(height: cardSlotHeight)
+            }
         }
+        .frame(height: cardSlotHeight)
+        .clipped()
+        .onChange(of: slideProgress) { _, newValue in
+            withAnimation(Self.slideAnimation) { animatedProgress = newValue }
+        }
+    }
+
+    /// 滑动进度：动画开始后走 animatedProgress 的弹簧插值，否则直接跟参数
+    private var progress: CGFloat { animatedProgress ?? slideProgress }
+
+    /// 卡片切换滑动：临界阻尼弹簧（零过冲），≈0.3s，与面板形状弹簧同时跑
+    private static let slideAnimation: Animation = .spring(response: 0.32, dampingFraction: 1.0)
+
+    /// 滑动行程：两张卡里较宽者 + 间距，保证旧卡整张滑出卡片区被裁掉
+    private var slideTravel: CGFloat {
+        max(cardSize.width, slide?.fromCard.width ?? 0) + 24
     }
 
     /// 正式渲染时的列宽：卡片内宽（宽度方向不额外缩放，内容按此重排）
@@ -393,11 +441,11 @@ struct NotchContentView: View {
         return Self.columnWidth(forCardWidth: cardSize.width)
     }
 
-    @ViewBuilder private func moduleView(_ module: Module) -> some View {
+    @ViewBuilder private func moduleView(_ module: Module, inner: CGFloat) -> some View {
         switch module {
-        case .calendar: calendarColumn
-        case .resources: resourcesColumn
-        case .music: musicColumn
+        case .calendar: calendarColumn(inner: inner)
+        case .resources: resourcesColumn(inner: inner)
+        case .music: musicColumn(inner: inner)
         }
     }
 
@@ -410,12 +458,19 @@ struct NotchContentView: View {
     /// 内容列按卡片内宽布局、高度取 cardContentHeight，超出卡片时靠 cardScale 缩小兜底
     /// （scale 缩的是视觉尺寸，布局高度仍钉在内容高）
     private func renderedCard(_ module: Module) -> some View {
-        moduleView(module)
+        cardBody(module, inner: effectiveColumnWidth(Self.naturalColumnWidth(for: module)),
+                 card: cardSize, contentHeight: cardContentHeight, scale: cardScale)
+    }
+
+    /// 按给定几何渲染一张卡片（当前模块用布局几何，滑动过渡中的旧卡用切换前几何，不重排）
+    private func cardBody(_ module: Module, inner: CGFloat, card: CGSize,
+                          contentHeight: CGFloat, scale: CGFloat) -> some View {
+        moduleView(module, inner: inner)
             .padding(.horizontal, Self.cardPadding)
             .padding(.vertical, Self.cardVPadding)
-            .frame(height: max(1, cardContentHeight), alignment: .center)
-            .scaleEffect(cardScale, anchor: .center)
-            .frame(width: max(1, cardSize.width), height: max(1, cardSize.height), alignment: .center)
+            .frame(height: max(1, contentHeight), alignment: .center)
+            .scaleEffect(scale, anchor: .center)
+            .frame(width: max(1, card.width), height: max(1, card.height), alignment: .center)
             .background(cardBackground)
             .frame(height: cardSlotHeight)
     }
@@ -461,7 +516,7 @@ struct NotchContentView: View {
             }
     }
 
-    private var calendarColumn: some View {
+    private func calendarColumn(inner: CGFloat) -> some View {
         VStack(spacing: compactMode ? 4 : 5) {
             header
             weekdayRow
@@ -472,7 +527,7 @@ struct NotchContentView: View {
                 daySection
             }
         }
-        .frame(width: effectiveColumnWidth(Self.calendarColumnWidth))
+        .frame(width: inner)
     }
 
     private var emptyState: some View {
@@ -519,8 +574,7 @@ struct NotchContentView: View {
     /// 系统资源卡：上半块 = CPU/内存 环形仪表各占一格（共半块），GPU 小环浮在两环之间的空白正中；
     /// 下半块 = 磁盘/网络 上下两行（标题+读数一行 + 通栏趋势线）。
     /// 紧凑密度（屏幕极矮兜底）= 每项单行。
-    private var resourcesColumn: some View {
-        let inner = effectiveColumnWidth(Self.resourcesColumnWidth)
+    private func resourcesColumn(inner: CGFloat) -> some View {
         let primary = primaryResourceItems
         let rates = rateResourceItems
         let showGPU = enabledResourceItems.contains(.gpu)
@@ -762,7 +816,7 @@ struct NotchContentView: View {
 
     // MARK: - 正在播放模块
 
-    private var musicColumn: some View {
+    private func musicColumn(inner: CGFloat) -> some View {
         VStack(alignment: .leading, spacing: 8) {
             moduleHeader("music.note", L10n.tr("正在播放"))
             if let info = music.nowPlaying {
@@ -774,7 +828,7 @@ struct NotchContentView: View {
                     .padding(.top, 2)
             }
         }
-        .frame(width: effectiveColumnWidth(Self.musicColumnWidth))
+        .frame(width: inner)
     }
 
     private func musicBody(_ info: NowPlayingInfo) -> some View {
@@ -1188,6 +1242,11 @@ final class NotchPanel: NSPanel {
     private var lastNotchTL: CGRect = .zero
     private var lastModel: NotchCalendarViewModel?
     private var displayedModule: NotchContentView.Module?
+    /// 卡片切换滑动过渡（方向 + 切换前几何）：过渡期间旧卡与新卡同时在内容视图里，
+    /// 进度跑到 1 后旧卡停在卡片区外（被裁掉不可见）
+    private var currentSlide: NotchContentView.CardSlide?
+    /// 滑动进度（0 = 起手帧，1 = 落定）；无过渡时恒 1
+    private var slideProgress: CGFloat = 1
     /// 顶部箭头 / 双指左右滑动切换回调（-1 = 上一张，+1 = 下一张）
     private var onNavigateModule: ((Int) -> Void)?
     private var lastLayout: PanelLayout?
@@ -1369,6 +1428,8 @@ final class NotchPanel: NSPanel {
         lastNotchTL = notchTL
         lastModel = model
         displayedModule = module
+        currentSlide = nil
+        slideProgress = 1
         self.onNavigateModule = onNavigateModule
 
         let layout = Self.computeLayout(screen: screen, notchSize: notchTL.size,
@@ -1427,18 +1488,39 @@ final class NotchPanel: NSPanel {
                                topWidth: width, neckWidth: width, bottomWidth: width, height: height)
     }
 
-    /// 切换模块（左右箭头 / 双指左右滑动）：面板尺寸按新模块内容弹簧变形，并重建 contentView
-    func switchModule(to module: NotchContentView.Module) {
+    /// 切换模块（左右箭头 / 双指左右滑动）：卡片按 step 方向滑动过渡（旧卡滑出 / 新卡滑入），
+    /// 面板尺寸同时按新模块内容弹簧变形。step = -1 上一张（旧卡向右出、新卡自左入），+1 反向
+    func switchModule(to module: NotchContentView.Module, step: Int) {
         guard let screen = lastScreen, let model = lastModel, displayedModule != module else { return }
+        let fromModule = displayedModule
+        let fromLayout = lastLayout
         displayedModule = module
+        currentSlide = fromModule.flatMap { from in
+            fromLayout.map { previous in
+                NotchContentView.CardSlide(from: from, step: step < 0 ? -1 : 1,
+                                           fromCard: previous.card,
+                                           fromContentHeight: previous.contentHeight,
+                                           fromScale: previous.scale)
+            }
+        }
+        // 先以起手帧（进度 0）交出去，下一轮主线程再推 1：同一次 rootView 更新里把进度
+        // 从 0 改成 1 只会得到终态（0 从未上屏、onChange 也不触发），过渡就没了
+        slideProgress = 0
         let layout = Self.computeLayout(screen: screen, notchSize: lastNotchSize, model: model, module: module)
         lastLayout = layout
         contentView = makeContentView(model: model, layout: layout)
         applyLayoutFrame(layout, screen: screen)
         invalidateShadow()
+        guard currentSlide != nil else { return }
+        DispatchQueue.main.async { [weak self] in
+            guard let self, self.displayedModule == module,
+                  let model = self.lastModel, let layout = self.lastLayout else { return }
+            self.slideProgress = 1
+            self.updateContentView(model: model, layout: layout)
+        }
     }
 
-    /// 日程加载/切换后重测内容布局：尺寸变化时重建 contentView 并弹簧变形
+    /// 日程加载/切换后重测内容布局：尺寸变化时只换 hosting 的 rootView（保留在途滑动动画）并弹簧变形
     func refit(model: NotchCalendarViewModel) {
         guard let screen = lastScreen, let module = displayedModule else { return }
         let layout = Self.computeLayout(screen: screen, notchSize: lastNotchSize, model: model, module: module)
@@ -1451,7 +1533,7 @@ final class NotchPanel: NSPanel {
            abs(layout.contentHeight - last.contentHeight) <= 0.5 {
             return
         }
-        contentView = makeContentView(model: model, layout: layout)
+        updateContentView(model: model, layout: layout)
         applyLayoutFrame(layout, screen: screen)
         invalidateShadow()
     }
@@ -1488,6 +1570,34 @@ final class NotchPanel: NSPanel {
         contentHosting?.alphaValue = alpha
     }
 
+    /// 按面板当前状态（displayedModule / currentSlide / slideProgress）构造内容视图
+    private func rootContentView(model: NotchCalendarViewModel, layout: PanelLayout) -> NotchContentView {
+        NotchContentView(model: model,
+                         displayWidth: layout.width,
+                         displayHeight: layout.height,
+                         notchHeight: lastNotchSize.height,
+                         displayModule: displayedModule,
+                         onNavigateModule: { [weak self] step in
+                             self?.onNavigateModule?(step)
+                         },
+                         sideWallInset: layout.sideInset,
+                         cardSize: layout.card,
+                         cardContentHeight: layout.contentHeight,
+                         cardScale: layout.scale,
+                         compactMode: layout.compact,
+                         slide: currentSlide,
+                         slideProgress: slideProgress)
+    }
+
+    /// 只换 hosting 的 rootView：保留 SwiftUI 身份与在途滑动动画（refit / 滑动进度推进用）
+    private func updateContentView(model: NotchCalendarViewModel, layout: PanelLayout) {
+        guard let hosting = contentHosting as? NSHostingView<NotchContentView> else {
+            contentView = makeContentView(model: model, layout: layout)
+            return
+        }
+        hosting.rootView = rootContentView(model: model, layout: layout)
+    }
+
     /// 纯黑背景直接铺在遮罩容器底（遮罩裁出刘海形），内容以 autoresizing 跟随。
     ///
     /// 结构红线（DEV-024）：hosting 必须以 addSubview + autoresizingMask 跟随容器，
@@ -1495,19 +1605,7 @@ final class NotchPanel: NSPanel {
     /// SwiftUI 固定 .frame 尺寸会经约束链反向钳制窗口尺寸，setFrame 的宽高
     /// 被静默锁死（只有原点生效），「从刘海生长」就退化成全尺寸面板平移。
     private func makeContentView(model: NotchCalendarViewModel, layout: PanelLayout) -> NSView {
-        let hosting = NSHostingView(rootView: NotchContentView(model: model,
-                                                               displayWidth: layout.width,
-                                                               displayHeight: layout.height,
-                                                               notchHeight: lastNotchSize.height,
-                                                               displayModule: displayedModule,
-                                                               onNavigateModule: { [weak self] step in
-                                                                   self?.onNavigateModule?(step)
-                                                               },
-                                                               sideWallInset: layout.sideInset,
-                                                               cardSize: layout.card,
-                                                               cardContentHeight: layout.contentHeight,
-                                                               cardScale: layout.scale,
-                                                               compactMode: layout.compact))
+        let hosting = NSHostingView(rootView: rootContentView(model: model, layout: layout))
         let container = NotchShapeContainerView(referenceNotchWidth: lastNotchSize.width,
                                                 barHeight: max(0, lastNotchSize.height - Self.startInset),
                                                 initialSize: CGSize(width: layout.width, height: layout.height))
