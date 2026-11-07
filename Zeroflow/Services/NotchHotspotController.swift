@@ -545,6 +545,7 @@ final class NotchHotspotController {
         let index = currentSelectedModule().flatMap { modules.firstIndex(of: $0) } ?? 0
         let count = modules.count
         let next = ((index + step) % count + count) % count
+        ZSLog("Notch step: step=\(step) index=\(index) next=\(next) target=\(modules[next]) sliding=\(panel?.isSliding == true)")
         handleSelectModule(modules[next], step: step)
     }
 
@@ -552,6 +553,12 @@ final class NotchHotspotController {
     /// step = 滑动方向（-1 上一张 / +1 下一张），面板据此决定卡片滑出滑入方向
     private func handleSelectModule(_ module: NotchContentView.Module, step: Int) {
         guard module != selectedModule else { return }
+        // 一次滑动落定前忽略新的切换请求，避免当前卡被瞬移回中心（临界阻尼 ≈0.45s）
+        guard panel?.isSliding != true else {
+            ZSLog("Notch select: dropped \(module) step=\(step) (sliding)")
+            return
+        }
+        ZSLog("Notch select: \(String(describing: selectedModule)) -> \(module) step=\(step)")
         selectedModule = module
         panel?.switchModule(to: module, step: step)
         syncPanelFrame()
