@@ -223,20 +223,35 @@ final class CaptureCoordinator: NSObject, ObservableObject {
         let contentRect = NSWindow.contentRect(forFrameRect: sampleFrame, styleMask: styleMask)
         let titleBarHeight = sampleFrame.height - contentRect.height
 
-        let hosting = NSHostingController(rootView: EditorView(
+        let glassBackground = SettingsStore.shared.editorGlassBackground
+        let editorRootView = EditorView(
             image: image,
             onClose: {
                 self.editorController?.close()
                 self.editorController = nil
             },
-            barHeight: titleBarHeight
-        ))
+            barHeight: titleBarHeight,
+            glassBackground: glassBackground
+        )
 
-        let window = NSWindow(contentViewController: hosting)
+        let window = NSWindow()
         window.title = L10n.tr("zeroflow 截图")
         window.styleMask = styleMask
         window.isRestorable = false
         window.delegate = self
+        if glassBackground {
+            // 液态玻璃必须透过透明窗体采样（同剪贴板/切换器面板）；
+            // 内容视图铺满整窗（含标题栏），SwiftUI 侧用标题栏高度补顶部留白，布局与非玻璃版一致
+            window.styleMask.insert(.fullSizeContentView)
+            window.titlebarAppearsTransparent = true
+            window.isOpaque = false
+            window.backgroundColor = .clear
+            window.contentView = PanelHostingContainer(rootView: editorRootView,
+                                                       glassBackground: true,
+                                                       cornerRadius: 0)
+        } else {
+            window.contentViewController = NSHostingController(rootView: editorRootView)
+        }
 
         // 窗口初始尺寸根据截图自适应：
         // - 截图较小 → 窗口贴着截图大小（避免大片空白）

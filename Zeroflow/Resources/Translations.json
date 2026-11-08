@@ -878,5 +878,10 @@
     "zh-Hans": "整块面板（含顶部刘海条）使用液态玻璃背景；macOS 26 以下自动回退为磨砂。关闭后使用默认纯黑背景。",
     "en": "Use a Liquid Glass background for the entire panel, including the top notch bar; on macOS versions below 26 it falls back to a frosted background. Turn off to use the default solid black background.",
     "ja": "上部のノッチバーを含むパネル全体にリキッドグラス背景を使用します。macOS 26 未満ではすりガラスにフォールバックします。オフにすると既定の純黒背景を使用します。"
+  },
+  "编辑窗口使用 macOS 26 的液态玻璃效果；旧系统自动回退为磨砂。关闭后使用默认背景。": {
+    "zh-Hans": "编辑窗口使用 macOS 26 的液态玻璃效果；旧系统自动回退为磨砂。关闭后使用默认背景。",
+    "en": "Use the macOS 26 Liquid Glass effect for the editor window; older systems fall back to a frosted background. Turn off to use the default background.",
+    "ja": "編集ウィンドウに macOS 26 のリキッドグラス効果を使用します。古いシステムではすりガラスにフォールバックします。オフにすると既定の背景を使用します。"
   }
 }

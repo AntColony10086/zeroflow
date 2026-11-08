@@ -133,6 +133,14 @@ struct SettingsView: View {
 
             if store.screenshotEnabled {
                 Section {
+                    Toggle(L10n.tr("使用液态玻璃背景"), isOn: $store.editorGlassBackground)
+                } header: {
+                    Text(L10n.tr("外观"))
+                } footer: {
+                    Text(L10n.tr("编辑窗口使用 macOS 26 的液态玻璃效果；旧系统自动回退为磨砂。关闭后使用默认背景。"))
+                }
+
+                Section {
                     ScreenRecordingPermissionRow()
                 } header: {
                     Text(L10n.tr("屏幕录制权限"))

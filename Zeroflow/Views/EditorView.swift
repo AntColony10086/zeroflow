@@ -66,11 +66,13 @@ struct EditorView: View {
 
     private let settings = SettingsStore.shared
     private let barHeight: CGFloat
+    private let glassBackground: Bool
 
-    init(image: NSImage, onClose: @escaping () -> Void, barHeight: CGFloat = 28) {
+    init(image: NSImage, onClose: @escaping () -> Void, barHeight: CGFloat = 28, glassBackground: Bool = false) {
         _doc = StateObject(wrappedValue: EditDocument(image: image))
         self.onClose = onClose
         self.barHeight = barHeight
+        self.glassBackground = glassBackground
     }
 
     var body: some View {
@@ -79,8 +81,14 @@ struct EditorView: View {
             Divider()
             toolbar
         }
+        // 液态玻璃模式用 fullSizeContentView：内容铺满整窗，顶部补标题栏留白保持原布局
+        .padding(.top, glassBackground ? barHeight : 0)
         .frame(minWidth: 720, minHeight: 300)
-        .background(Color(nsColor: .windowBackgroundColor))
+        .background {
+            if !glassBackground {
+                Color(nsColor: .windowBackgroundColor)
+            }
+        }
         .onAppear {
             installKeyboardMonitor()
         }
@@ -147,7 +155,9 @@ struct EditorView: View {
     private var canvasArea: some View {
         GeometryReader { geo in
             ZStack {
-                Color(nsColor: .textBackgroundColor)
+                if !glassBackground {
+                    Color(nsColor: .textBackgroundColor)
+                }
                 Canvas { context, size in
                     // 等比适配画布居中显示
                     let fit = fitRect(for: size)
@@ -861,7 +871,11 @@ struct EditorView: View {
         }
         .padding(.horizontal, 10)
         .frame(height: barHeight)
-        .background(Color(nsColor: .controlBackgroundColor))
+        .background {
+            if !glassBackground {
+                Color(nsColor: .controlBackgroundColor)
+            }
+        }
         .overlay(
             Rectangle()
                 .fill(Color.secondary.opacity(0.35))

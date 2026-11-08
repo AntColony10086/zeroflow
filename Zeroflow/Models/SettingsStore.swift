@@ -24,6 +24,7 @@ final class SettingsStore: ObservableObject {
         static let saveDirectory = "saveDirectory"
         static let askSaveLocation = "askSaveLocation"
         static let screenshotEnabled = "screenshotEnabled"
+        static let editorGlassBackground = "editorGlassBackground"
         static let dockClickMinimize = "dockClickMinimize"
         static let dockPreviewEnabled = "dockPreviewEnabled"
         static let dockPreviewHoverDelayMs = "dockPreviewHoverDelayMs"
@@ -110,6 +111,7 @@ final class SettingsStore: ObservableObject {
             Keys.saveDirectory: Self.defaultSaveDirectory,
             Keys.askSaveLocation: false,
             Keys.screenshotEnabled: false,
+            Keys.editorGlassBackground: true,
             Keys.dockClickMinimize: false,
             Keys.dockPreviewEnabled: false,
             Keys.dockPreviewHoverDelayMs: 300,
@@ -142,6 +144,7 @@ final class SettingsStore: ObservableObject {
         _saveDirectory = Published(initialValue: defaults.string(forKey: Keys.saveDirectory) ?? Self.defaultSaveDirectory)
         _askSaveLocation = Published(initialValue: defaults.bool(forKey: Keys.askSaveLocation))
         _screenshotEnabled = Published(initialValue: defaults.bool(forKey: Keys.screenshotEnabled))
+        _editorGlassBackground = Published(initialValue: defaults.bool(forKey: Keys.editorGlassBackground))
         _dockClickMinimize = Published(initialValue: defaults.bool(forKey: Keys.dockClickMinimize))
         _dockPreviewEnabled = Published(initialValue: defaults.bool(forKey: Keys.dockPreviewEnabled))
         _dockPreviewHoverDelayMs = Published(initialValue: defaults.integer(forKey: Keys.dockPreviewHoverDelayMs))
@@ -349,6 +352,13 @@ final class SettingsStore: ObservableObject {
                 object: nil,
                 userInfo: ["enabled": screenshotEnabled]
             )
+        }
+    }
+
+    /// 编辑窗口背景：液态玻璃（旧系统回退磨砂）
+    @Published var editorGlassBackground: Bool {
+        didSet {
+            defaults.set(editorGlassBackground, forKey: Keys.editorGlassBackground)
         }
     }
 
