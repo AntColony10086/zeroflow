@@ -1640,7 +1640,7 @@ final class NotchPanel: NSPanel {
         hosting.rootView = rootContentView(model: model, layout: layout)
     }
 
-    /// 纯黑背景直接铺在遮罩容器底（遮罩裁出刘海形），内容以 autoresizing 跟随。
+    /// 背景（纯黑或液态玻璃）直接铺在遮罩容器底（遮罩裁出刘海形），内容以 autoresizing 跟随。
     ///
     /// 结构红线（DEV-024）：hosting 必须以 addSubview + autoresizingMask 跟随容器，
     /// 绝不能赋给玻璃 contentView、绝不能对 hosting 用 Auto Layout 约束——
@@ -1650,7 +1650,8 @@ final class NotchPanel: NSPanel {
         let hosting = NSHostingView(rootView: rootContentView(model: model, layout: layout))
         let container = NotchShapeContainerView(referenceNotchWidth: lastNotchSize.width,
                                                 barHeight: max(0, lastNotchSize.height - Self.startInset),
-                                                initialSize: CGSize(width: layout.width, height: layout.height))
+                                                initialSize: CGSize(width: layout.width, height: layout.height),
+                                                glassBackground: SettingsStore.shared.notchGlassBackground)
         container.addSubview(hosting)
         hosting.frame = container.bounds
         hosting.autoresizingMask = [.width, .height]
@@ -1781,26 +1782,37 @@ private struct NotchShapeState {
 /// 等比放大（弹簧每帧 setFrame 触发 layout 重建路径，动画全程保持「当前大小的刘海」）。
 /// 形状不止是窗口 frame：`applyProfile` 额外给定顶栏/细颈/鼓包三条外包络宽，
 /// 路径据此长出「细颈 + 底部鼓包」（水滴/沙漏），窗口 frame 只是包围盒。
-/// 本视图提供纯黑底色并做形状裁剪，hosting 由外部铺满。
+/// 本视图提供纯黑底色或液态玻璃背景并做形状裁剪，hosting 由外部铺满。
 private final class NotchShapeContainerView: NSView {
     private let referenceWidth: CGFloat
     /// 顶栏（刘海条）高度：顶栏以下才会出现细颈/鼓包
     private let barHeight: CGFloat
     private let maskLayer: CAShapeLayer
+    /// 液态玻璃背景（旧系统回退磨砂）；关闭时保持纯黑底
+    private let glassBackground: Bool
+    private let backdrop: NSView?
     /// 当前形状外包络宽（插件每帧经 applyProfile 更新；nil = 退化为整宽刘海形）
     private var profile: (top: CGFloat, neck: CGFloat, bottom: CGFloat)?
 
     /// initialSize：创建时用已知面板终尺寸立即生成遮罩路径，
     /// 避免首次 orderFront 在 layout() 之前露出一帧方形内容
-    init(referenceNotchWidth: CGFloat, barHeight: CGFloat, initialSize: CGSize) {
+    init(referenceNotchWidth: CGFloat, barHeight: CGFloat, initialSize: CGSize,
+         glassBackground: Bool) {
         self.referenceWidth = max(1, referenceNotchWidth)
         self.barHeight = max(0, barHeight)
+        self.glassBackground = glassBackground
+        self.backdrop = glassBackground ? PanelGlassBackground.make(cornerRadius: 0) : nil
         self.maskLayer = CAShapeLayer()
         // 弹簧 120Hz 改 path/frame 时禁用隐式动画，避免遮罩滞后于窗口几何
         maskLayer.actions = ["path": NSNull(), "bounds": NSNull(), "position": NSNull()]
         super.init(frame: NSRect(origin: .zero, size: initialSize))
         wantsLayer = true
-        layer?.backgroundColor = NSColor.black.cgColor
+        layer?.backgroundColor = glassBackground ? NSColor.clear.cgColor : NSColor.black.cgColor
+        if let backdrop {
+            backdrop.frame = bounds
+            backdrop.autoresizingMask = [.width, .height]
+            addSubview(backdrop)
+        }
         layer?.mask = maskLayer
         updateMask()
     }
@@ -1812,7 +1824,7 @@ private final class NotchShapeContainerView: NSView {
 
     override func updateLayer() {
         // AppKit 重建 backing layer 时重申底色/遮罩（常态下 init 已设好）
-        layer?.backgroundColor = NSColor.black.cgColor
+        layer?.backgroundColor = glassBackground ? NSColor.clear.cgColor : NSColor.black.cgColor
         layer?.mask = maskLayer
     }
 

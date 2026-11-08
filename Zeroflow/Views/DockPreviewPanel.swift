@@ -11,6 +11,7 @@ final class DockPreviewViewModel: ObservableObject {
 struct DockPreviewContentView: View {
     @ObservedObject var model: DockPreviewViewModel
     let vertical: Bool
+    var glassBackground: Bool
     var onSelect: (CGWindowID) -> Void
     var onClose: (CGWindowID) -> Void
     @State private var hoveredID: CGWindowID?
@@ -32,10 +33,12 @@ struct DockPreviewContentView: View {
             }
         }
         .padding(10)
-        .background(
-            RoundedRectangle(cornerRadius: 12)
-                .fill(Color(nsColor: .windowBackgroundColor).opacity(0.94))
-        )
+        .background {
+            if !glassBackground {
+                RoundedRectangle(cornerRadius: 12)
+                    .fill(Color(nsColor: .windowBackgroundColor).opacity(0.94))
+            }
+        }
     }
 
     @ViewBuilder private var cards: some View {
@@ -90,6 +93,7 @@ final class DockPreviewPanel: NSPanel {
     private var onClose: ((CGWindowID) -> Void)?
     private var anchorTL: CGRect?
     private var placement: Placement = .above
+    private var hostingContainer: PanelHostingContainer<DockPreviewContentView>?
 
     /// 依据 Dock 项位置（左上原点全局坐标）重建内容并定位、显示。
     /// 面板弹出后位置冻结（图标放大效验抖由 controller 的保活/隐藏判定兜住，不跟随重排）。
@@ -119,12 +123,18 @@ final class DockPreviewPanel: NSPanel {
 
     private func rebuildContentView() {
         guard let contentModel, let onSelect, let onClose else { return }
-        contentView = NSHostingView(
+        let glass = SettingsStore.shared.dockPreviewGlassBackground
+        let container = PanelHostingContainer(
             rootView: DockPreviewContentView(model: contentModel,
                                              vertical: placement != .above,
+                                             glassBackground: glass,
                                              onSelect: onSelect,
-                                             onClose: onClose)
+                                             onClose: onClose),
+            glassBackground: glass,
+            cornerRadius: 12
         )
+        hostingContainer = container
+        contentView = container
     }
 
     /// 按当前内容测量尺寸，并按锚点与朝向定位（present / refit 共用）。
@@ -139,8 +149,8 @@ final class DockPreviewPanel: NSPanel {
             ?? NSScreen.screens.first { $0.frame.intersects(anchorCocoa) }
             ?? NSScreen.main
 
-        contentView?.layoutSubtreeIfNeeded()
-        var size = contentView?.fittingSize ?? frame.size
+        hostingContainer?.layoutSubtreeIfNeeded()
+        var size = hostingContainer?.contentFittingSize ?? frame.size
         size = NSSize(width: max(1, ceil(size.width)), height: max(1, ceil(size.height)))
         if let screen {
             size = NSSize(width: min(size.width, screen.frame.width - 32),

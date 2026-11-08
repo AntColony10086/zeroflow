@@ -27,8 +27,10 @@ final class SettingsStore: ObservableObject {
         static let dockClickMinimize = "dockClickMinimize"
         static let dockPreviewEnabled = "dockPreviewEnabled"
         static let dockPreviewHoverDelayMs = "dockPreviewHoverDelayMs"
+        static let dockPreviewGlassBackground = "dockPreviewGlassBackground"
         static let cmdTabSwitcherEnabled = "cmdTabSwitcherEnabled"
         static let windowSwitcherShowWindowlessApps = "windowSwitcherShowWindowlessApps"
+        static let windowSwitcherGlassBackground = "windowSwitcherGlassBackground"
         static let cmdTabShortcutKeyCode = "cmdTabShortcut.keyCode"
         static let cmdTabShortcutModifiers = "cmdTabShortcut.modifiers"
         static let appLanguage = "appLanguage"
@@ -39,6 +41,7 @@ final class SettingsStore: ObservableObject {
         static let finderCmdCommand = "finderCmdCommand"
         static let notchEnabled = "notchEnabled"
         static let notchHoverDelayMs = "notchHoverDelayMs"
+        static let notchGlassBackground = "notchGlassBackground"
         static let notchTriggerMode = "notchTriggerMode"
         static let notchShowCalendar = "notchShowCalendar"
         static let notchShowResources = "notchShowResources"
@@ -110,8 +113,10 @@ final class SettingsStore: ObservableObject {
             Keys.dockClickMinimize: false,
             Keys.dockPreviewEnabled: false,
             Keys.dockPreviewHoverDelayMs: 300,
+            Keys.dockPreviewGlassBackground: true,
             Keys.cmdTabSwitcherEnabled: false,
             Keys.windowSwitcherShowWindowlessApps: true,
+            Keys.windowSwitcherGlassBackground: true,
             Keys.cmdTabShortcutKeyCode: Int(ShortcutKey.cmdTabDefault.keyCode),
             Keys.cmdTabShortcutModifiers: Int(ShortcutKey.cmdTabDefault.modifiers.rawValue),
             Keys.finderNewFileEnabled: false,
@@ -121,6 +126,7 @@ final class SettingsStore: ObservableObject {
             Keys.finderCmdCommand: Self.defaultFinderCmdCommand,
             Keys.notchEnabled: false,
             Keys.notchHoverDelayMs: 200,
+            Keys.notchGlassBackground: true,
             Keys.notchTriggerMode: NotchTriggerMode.click.rawValue,
             Keys.notchShowCalendar: true,
             Keys.notchShowResources: false,
@@ -139,8 +145,10 @@ final class SettingsStore: ObservableObject {
         _dockClickMinimize = Published(initialValue: defaults.bool(forKey: Keys.dockClickMinimize))
         _dockPreviewEnabled = Published(initialValue: defaults.bool(forKey: Keys.dockPreviewEnabled))
         _dockPreviewHoverDelayMs = Published(initialValue: defaults.integer(forKey: Keys.dockPreviewHoverDelayMs))
+        _dockPreviewGlassBackground = Published(initialValue: defaults.bool(forKey: Keys.dockPreviewGlassBackground))
         _cmdTabSwitcherEnabled = Published(initialValue: defaults.bool(forKey: Keys.cmdTabSwitcherEnabled))
         _windowSwitcherShowWindowlessApps = Published(initialValue: defaults.bool(forKey: Keys.windowSwitcherShowWindowlessApps))
+        _windowSwitcherGlassBackground = Published(initialValue: defaults.bool(forKey: Keys.windowSwitcherGlassBackground))
         _finderNewFileEnabled = Published(initialValue: defaults.bool(forKey: Keys.finderNewFileEnabled))
         _finderNewFileName = Published(initialValue: defaults.string(forKey: Keys.finderNewFileName) ?? "new file.md")
         _finderCmdEnabled = Published(initialValue: defaults.bool(forKey: Keys.finderCmdEnabled))
@@ -148,6 +156,7 @@ final class SettingsStore: ObservableObject {
         _finderCmdCommand = Published(initialValue: defaults.string(forKey: Keys.finderCmdCommand) ?? Self.defaultFinderCmdCommand)
         _notchEnabled = Published(initialValue: defaults.bool(forKey: Keys.notchEnabled))
         _notchHoverDelayMs = Published(initialValue: defaults.integer(forKey: Keys.notchHoverDelayMs))
+        _notchGlassBackground = Published(initialValue: defaults.bool(forKey: Keys.notchGlassBackground))
         _notchTriggerMode = Published(initialValue: NotchTriggerMode(rawValue: defaults.string(forKey: Keys.notchTriggerMode) ?? "") ?? .click)
         _notchShowCalendar = Published(initialValue: defaults.bool(forKey: Keys.notchShowCalendar))
         _notchShowResources = Published(initialValue: defaults.bool(forKey: Keys.notchShowResources))
@@ -376,6 +385,13 @@ final class SettingsStore: ObservableObject {
         }
     }
 
+    /// 预览面板背景：液态玻璃（旧系统回退磨砂）
+    @Published var dockPreviewGlassBackground: Bool {
+        didSet {
+            defaults.set(dockPreviewGlassBackground, forKey: Keys.dockPreviewGlassBackground)
+        }
+    }
+
     // MARK: - 窗口切换器
 
     @Published var cmdTabSwitcherEnabled: Bool {
@@ -392,6 +408,13 @@ final class SettingsStore: ObservableObject {
     @Published var windowSwitcherShowWindowlessApps: Bool {
         didSet {
             defaults.set(windowSwitcherShowWindowlessApps, forKey: Keys.windowSwitcherShowWindowlessApps)
+        }
+    }
+
+    /// 切换器面板背景：液态玻璃（旧系统回退磨砂）
+    @Published var windowSwitcherGlassBackground: Bool {
+        didSet {
+            defaults.set(windowSwitcherGlassBackground, forKey: Keys.windowSwitcherGlassBackground)
         }
     }
 
@@ -463,6 +486,13 @@ final class SettingsStore: ObservableObject {
     @Published var notchHoverDelayMs: Int {
         didSet {
             defaults.set(notchHoverDelayMs, forKey: Keys.notchHoverDelayMs)
+        }
+    }
+
+    /// 灵动岛面板背景：液态玻璃（旧系统回退磨砂）
+    @Published var notchGlassBackground: Bool {
+        didSet {
+            defaults.set(notchGlassBackground, forKey: Keys.notchGlassBackground)
         }
     }
 

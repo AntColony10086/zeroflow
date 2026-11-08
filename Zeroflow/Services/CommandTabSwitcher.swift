@@ -537,6 +537,7 @@ final class CommandTabSwitcher {
         panel?.orderOut(nil)
         let panel = WindowSwitcherPanel(
             model: ensureModel(),
+            glassBackground: SettingsStore.shared.windowSwitcherGlassBackground,
             onSelect: { [weak self] id in
                 self?.activateWindow(id: id)
             },

@@ -224,6 +224,14 @@ struct SettingsView: View {
                 }
 
                 Section {
+                    Toggle(L10n.tr("使用液态玻璃背景"), isOn: $store.windowSwitcherGlassBackground)
+                } header: {
+                    Text(L10n.tr("外观"))
+                } footer: {
+                    Text(L10n.tr("面板背景使用 macOS 26 的液态玻璃效果；旧系统自动回退为磨砂。关闭后使用默认背景。"))
+                }
+
+                Section {
                     ScreenRecordingPermissionRow()
                 } header: {
                     Text(L10n.tr("屏幕录制权限"))
@@ -268,6 +276,14 @@ struct SettingsView: View {
                     Text(L10n.tr("选项"))
                 } footer: {
                     Text(L10n.tr("鼠标停留在 Dock 图标上多久后弹出预览。"))
+                }
+
+                Section {
+                    Toggle(L10n.tr("使用液态玻璃背景"), isOn: $store.dockPreviewGlassBackground)
+                } header: {
+                    Text(L10n.tr("外观"))
+                } footer: {
+                    Text(L10n.tr("面板背景使用 macOS 26 的液态玻璃效果；旧系统自动回退为磨砂。关闭后使用默认背景。"))
                 }
 
                 Section {
@@ -443,6 +459,14 @@ struct SettingsView: View {
                     Text(L10n.tr("显示内容"))
                 } footer: {
                     Text(L10n.tr("弹出面板中显示的内容模块，一次显示一个，可通过面板顶部的箭头或双指左右滑动循环切换（默认日历）。全部关闭时，面板仍会弹出并提示添加显示内容。"))
+                }
+
+                Section {
+                    Toggle(L10n.tr("使用液态玻璃背景"), isOn: $store.notchGlassBackground)
+                } header: {
+                    Text(L10n.tr("外观"))
+                } footer: {
+                    Text(L10n.tr("整块面板（含顶部刘海条）使用液态玻璃背景；macOS 26 以下自动回退为磨砂。关闭后使用默认纯黑背景。"))
                 }
 
                 if store.notchShowResources {

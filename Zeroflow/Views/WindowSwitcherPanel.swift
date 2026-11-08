@@ -51,6 +51,7 @@ let switcherColumns = 6
 /// 悬停高亮、点击即切换；窗口多时整网格纵向滚动。
 struct WindowSwitcherGridView: View {
     @ObservedObject var model: WindowSwitcherViewModel
+    var glassBackground: Bool
     var onSelect: (CGWindowID) -> Void
     var onAction: (CGWindowID, WindowOperation) -> Void
     @State private var hoveredID: CGWindowID?
@@ -99,10 +100,12 @@ struct WindowSwitcherGridView: View {
             .frame(width: gridWidth, alignment: .center)
         }
         .frame(maxWidth: gridWidth)
-        .background(
-            RoundedRectangle(cornerRadius: 12)
-                .fill(Color(nsColor: .windowBackgroundColor).opacity(0.92))
-        )
+        .background {
+            if !glassBackground {
+                RoundedRectangle(cornerRadius: 12)
+                    .fill(Color(nsColor: .windowBackgroundColor).opacity(0.92))
+            }
+        }
         .padding(10)
     }
 }
@@ -111,9 +114,20 @@ struct WindowSwitcherGridView: View {
 /// 键盘由 CommandTabSwitcher 的事件 tap 处理（canBecomeKey=false）；
 /// 鼠标悬停/点击走 SwiftUI 手势。
 final class WindowSwitcherPanel: NSPanel {
+    private let container: PanelHostingContainer<WindowSwitcherGridView>
+
     init(model: WindowSwitcherViewModel,
+         glassBackground: Bool,
          onSelect: @escaping (CGWindowID) -> Void,
          onAction: @escaping (CGWindowID, WindowOperation) -> Void) {
+        let grid = WindowSwitcherGridView(model: model,
+                                          glassBackground: glassBackground,
+                                          onSelect: onSelect,
+                                          onAction: onAction)
+        self.container = PanelHostingContainer(rootView: grid,
+                                               glassBackground: glassBackground,
+                                               cornerRadius: 12,
+                                               backdropInset: 10)
         super.init(contentRect: NSRect(x: 0, y: 0, width: 760, height: 520),
                    styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
         self.level = .screenSaver
@@ -123,9 +137,7 @@ final class WindowSwitcherPanel: NSPanel {
         self.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .stationary]
         self.isReleasedWhenClosed = false
         self.animationBehavior = .none
-        self.contentView = NSHostingView(
-            rootView: WindowSwitcherGridView(model: model, onSelect: onSelect, onAction: onAction)
-        )
+        self.contentView = container
     }
 
     override var canBecomeKey: Bool { false }
@@ -140,8 +152,8 @@ final class WindowSwitcherPanel: NSPanel {
         let screen = screens.first { $0.frame.contains(mouse) } ?? screens.first
         guard let screen else { center(); return }
 
-        contentView?.layoutSubtreeIfNeeded()
-        let ideal = contentView?.fittingSize ?? frame.size
+        container.layoutSubtreeIfNeeded()
+        let ideal = container.contentFittingSize
         let sizeOK = ideal.width >= 1 && ideal.height >= 1
         var size = NSSize(width: ceil(sizeOK ? ideal.width : frame.size.width),
                           height: ceil(sizeOK ? ideal.height : frame.size.height))
