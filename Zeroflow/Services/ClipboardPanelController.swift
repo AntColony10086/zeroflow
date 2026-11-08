@@ -30,7 +30,7 @@ final class ClipboardPanel: NSPanel {
     override var acceptsFirstResponder: Bool { true }
 }
 
-/// 剪贴板历史面板控制器：热键触发 → 插入点处弹出 → 选择/搜索 → 复制并粘贴回原窗口。
+/// 剪贴板历史面板控制器：热键触发 → 鼠标位置弹出 → 选择/搜索 → 复制并粘贴回原窗口。
 final class ClipboardPanelController: NSObject, NSWindowDelegate {
     static let shared = ClipboardPanelController()
 
@@ -110,13 +110,11 @@ final class ClipboardPanelController: NSObject, NSWindowDelegate {
         previousApp = NSWorkspace.shared.frontmostApplication
         didActivateApp = false
 
-        // 必须在 makeKeyAndOrderFront 之前取插入点：面板成为 key 后焦点会转到搜索框
-        let caret = CaretLocator.focusedAnchorRect()
         let model = ClipboardViewModel(items: ClipboardHistoryStore.shared.items)
         self.model = model
         observe(model)
         installContent(model)
-        positionCollapsed(anchor: caret)
+        positionNearMouse()
 
         panel.alphaValue = 1
         panel.makeKeyAndOrderFront(nil)
@@ -316,40 +314,33 @@ final class ClipboardPanelController: NSObject, NSWindowDelegate {
                height: ClipboardPanelMetrics.height(for: rowCount))
     }
 
-    /// 锚点：优先贴着插入点（面板顶边在光标行下方 8pt，空间不够翻到上方），取不到插入点时退回鼠标右下
-    private func positionCollapsed(anchor: NSRect?) {
+    /// 锚点：鼠标右下 12pt 弹出；右侧/下方放不下时翻到光标另一侧，避免面板压住光标
+    private func positionNearMouse() {
         guard let panel, let model else { return }
         let size = collapsedSize(rowCount: model.filteredItems.count)
         let mouse = NSEvent.mouseLocation
-        let point = anchor.map { NSPoint(x: $0.midX, y: $0.midY) } ?? mouse
-        let screen = NSScreen.screens.first { $0.frame.contains(point) } ?? NSScreen.main
+        let screen = NSScreen.screens.first { $0.frame.contains(mouse) } ?? NSScreen.main
         anchorScreen = screen
         let visible = screen?.visibleFrame ?? NSRect(x: 0, y: 0, width: 1440, height: 900)
         let gap: CGFloat = 8
+        let offset: CGFloat = 12
 
-        var x: CGFloat
-        var topY: CGFloat
-        if let anchor {
-            x = anchor.minX
-            topY = anchor.minY - gap
-            if topY - size.height < visible.minY + gap {
-                // 下方放不下：翻到插入点上方
-                topY = anchor.maxY + gap + size.height
-            }
-        } else {
-            x = mouse.x + 12
-            topY = mouse.y - 12
+        var x = mouse.x + offset
+        if x + size.width > visible.maxX - gap {
+            // 右侧放不下：翻到光标左侧
+            x = mouse.x - offset - size.width
+        }
+        var topY = mouse.y - offset
+        if topY - size.height < visible.minY + gap {
+            // 下方放不下：翻到光标上方
+            topY = mouse.y + offset + size.height
         }
         x = min(max(x, visible.minX + gap), max(visible.minX + gap, visible.maxX - size.width - gap))
         topY = min(max(topY, visible.minY + size.height + gap), visible.maxY - gap)
         baseX = x
         anchorTopY = topY
         previewSide = hasSpaceOnRight ? .right : .left
-        if let anchor {
-            ZSLog("clipboard: anchor caret=\(Int(anchor.minX)),\(Int(anchor.minY)) \(Int(anchor.width))x\(Int(anchor.height))")
-        } else {
-            ZSLog("clipboard: anchor fallback mouse=\(Int(mouse.x)),\(Int(mouse.y))")
-        }
+        ZSLog("clipboard: anchor mouse=\(Int(mouse.x)),\(Int(mouse.y)) -> x=\(Int(x)) top=\(Int(topY))")
         panel.setFrame(NSRect(x: x, y: topY - size.height, width: size.width, height: size.height),
                        display: false)
     }
