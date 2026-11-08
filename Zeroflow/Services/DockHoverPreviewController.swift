@@ -297,6 +297,10 @@ final class DockHoverPreviewController {
         guard SettingsStore.shared.dockPreviewEnabled else { return Unmanaged.passUnretained(event) }
         // 未授权辅助功能时静默跳过
         guard AccessibilityPermission.isGranted else { return Unmanaged.passUnretained(event) }
+        // DockPeek 合成的指针瞬移（按热键弹出 Dock 时贴边/还原）不参与悬停判定
+        if event.getIntegerValueField(.eventSourceUserData) == Int64(DockPeekManager.syntheticEventUserData) {
+            return Unmanaged.passUnretained(event)
+        }
 
         switch type {
         case .mouseMoved:

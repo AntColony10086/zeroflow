@@ -883,5 +883,60 @@
     "zh-Hans": "编辑窗口使用 macOS 26 的液态玻璃效果；旧系统自动回退为磨砂。关闭后使用默认背景。",
     "en": "Use the macOS 26 Liquid Glass effect for the editor window; older systems fall back to a frosted background. Turn off to use the default background.",
     "ja": "編集ウィンドウに macOS 26 のリキッドグラス効果を使用します。古いシステムではすりガラスにフォールバックします。オフにすると既定の背景を使用します。"
+  },
+  "自动隐藏时按快捷键弹出 Dock": {
+    "zh-Hans": "自动隐藏时按快捷键弹出 Dock",
+    "en": "Reveal Dock with a Hotkey (Auto-Hidden Dock)",
+    "ja": "非表示 Dock をホットキーで一時的に表示"
+  },
+  "自动隐藏时弹出": {
+    "zh-Hans": "自动隐藏时弹出",
+    "en": "Reveal While Auto-Hidden",
+    "ja": "非表示時に一時表示"
+  },
+  "需要系统先在「桌面与 Dock → 自动显示和隐藏 Dock」中开启自动隐藏，此功能才可用。": {
+    "zh-Hans": "需要系统先在「桌面与 Dock → 自动显示和隐藏 Dock」中开启自动隐藏，此功能才可用。",
+    "en": "Requires \"Desktop & Dock → Automatically hide and show the Dock\" to be enabled in System Settings.",
+    "ja": "システム設定の「デスクトップと Dock → Dock を自動的に表示/非表示」をオンにする必要があります。"
+  },
+  "需要「辅助功能」权限才能移动鼠标指针": {
+    "zh-Hans": "需要「辅助功能」权限才能移动鼠标指针",
+    "en": "Requires Accessibility permission to move the mouse pointer",
+    "ja": "「アクセシビリティ」権限でマウスポインタを移動します"
+  },
+  "指针贴边停留时长": {
+    "zh-Hans": "指针贴边停留时长",
+    "en": "Dwell time at the Dock edge",
+    "ja": "Dock 端の待機時間"
+  },
+  "按热键后，指针被移到 Dock 所在屏幕边缘短暂弹出 Dock，随后自动还原到原位；Dock 收起时机由 macOS 自己管理。": {
+    "zh-Hans": "按热键后，指针被移到 Dock 所在屏幕边缘短暂弹出 Dock，随后自动还原到原位；Dock 收起时机由 macOS 自己管理。",
+    "en": "After the hotkey, the pointer moves to the Dock edge to briefly reveal the Dock, then returns to its original spot. macOS decides when the Dock hides again.",
+    "ja": "ホットキーを押すとポインタが Dock のある画面端へ移動して Dock を一瞬表示し、元の位置へ戻ります。Dock を隠すタイミングは macOS が管理します。"
+  },
+  "默认热键为 Option（⌥），仅支持修饰键组合（⌘ / ⇧ / ⌃ / ⌥）。": {
+    "zh-Hans": "默认热键为 Option（⌥），仅支持修饰键组合（⌘ / ⇧ / ⌃ / ⌥）。",
+    "en": "Default hotkey is Option (⌥). Only modifier-key combinations are supported (⌘ / ⇧ / ⌃ / ⌥).",
+    "ja": "既定ホットキーは Option（⌥）。修飾キーの組み合わせのみ対応（⌘ / ⇧ / ⌃ / ⌥）。"
+  },
+  "按住修饰键…": {
+    "zh-Hans": "按住修饰键…",
+    "en": "Press and hold modifiers…",
+    "ja": "修飾キーを押して…"
+  },
+  "此功能只支持修饰键组合（⌘ / ⇧ / ⌃ / ⌥），请只按修饰键": {
+    "zh-Hans": "此功能只支持修饰键组合（⌘ / ⇧ / ⌃ / ⌥），请只按修饰键",
+    "en": "Only modifier combinations (⌘ / ⇧ / ⌃ / ⌥) are supported. Press modifiers only.",
+    "ja": "修飾キーの組み合わせのみ対応（⌘ / ⇧ / ⌃ / ⌥）。修飾キーだけを押してください"
+  },
+  "录制期间请勿点击鼠标，只按修饰键": {
+    "zh-Hans": "录制期间请勿点击鼠标，只按修饰键",
+    "en": "Don't click the mouse while capturing — press modifiers only.",
+    "ja": "キャプチャ中はマウスをクリックせず、修飾キーだけを押してください"
+  },
+  "未设置": {
+    "zh-Hans": "未设置",
+    "en": "Not Set",
+    "ja": "未設定"
   }
 }

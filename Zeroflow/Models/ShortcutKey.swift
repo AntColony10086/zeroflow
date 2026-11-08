@@ -17,8 +17,12 @@ struct ShortcutKey: Hashable {
     /// 剪贴板历史默认快捷键：⌘⇧C（kVK_ANSI_C = 8）
     static let clipboardDefault = ShortcutKey(character: "c", keyCode: 8, modifiers: [.command, .shift])
 
+    /// Dock 弹出默认热键：裸 Option（kVK_Option = 58，无主键）
+    static let dockPeekDefault = ShortcutKey(character: "", keyCode: 58, modifiers: [.option])
+
     var isValid: Bool {
-        !modifiers.isEmpty && !character.isEmpty
+        !modifiers.isEmpty
+            && (!character.isEmpty || ShortcutKey.modifierKeyCodes.contains(keyCode))
     }
 
     func hash(into hasher: inout Hasher) {

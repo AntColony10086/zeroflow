@@ -23,6 +23,7 @@ struct SettingsView: View {
     @StateObject private var store = SettingsStore.shared
     @State private var selectedTab: SettingsTab = .screenshot
     @State private var showClearClipboardConfirmation = false
+    @State private var systemDockAutohide = DockPeekManager.readSystemAutohide()
 
     var body: some View {
         HStack(spacing: 0) {
@@ -599,8 +600,81 @@ struct SettingsView: View {
             } header: {
                 Text(L10n.tr("Dock"))
             }
+
+            Section {
+                Toggle(L10n.tr("自动隐藏时按快捷键弹出 Dock"), isOn: $store.dockPeekEnabled)
+                    .disabled(!systemDockAutohide)
+                    .onChange(of: store.dockPeekEnabled) { enabled in
+                        guard enabled else { return }
+                        if !AccessibilityPermission.isGranted {
+                            AccessibilityPermission.requestAuthorization()
+                        }
+                    }
+                if !systemDockAutohide {
+                    LabeledContent(L10n.tr("桌面与 Dock")) {
+                        HStack(spacing: 8) {
+                            Button(L10n.tr("前往设置")) {
+                                NSWorkspace.shared.open(URL(string: "x-apple.systempreferences:com.apple.Desktop-Settings.extension")!)
+                            }
+                            Button(L10n.tr("重新检测")) {
+                                refreshSystemDockAutohide()
+                            }
+                        }
+                    }
+                }
+                if store.dockPeekEnabled && systemDockAutohide {
+                    if !AccessibilityPermission.isGranted {
+                        AccessibilityPermissionRow(message: L10n.tr("需要「辅助功能」权限才能移动鼠标指针"))
+                        Text(L10n.tr("该权限与 Dock 单击最小化共用，若已开启则此处直接显示绿色。"))
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                    }
+                    HStack(spacing: 12) {
+                        Text(L10n.tr("快捷键"))
+                        DockPeekHotkeyRecorderView(
+                            shortcut: $store.dockPeekShortcut,
+                            onSuspend: { DockPeekManager.shared.suspend() },
+                            onResume: { DockPeekManager.shared.resume() },
+                            resetToDefault: { store.resetDockPeekShortcutToDefault() }
+                        )
+                    }
+                    VStack(alignment: .leading, spacing: 6) {
+                        LabeledContent(L10n.tr("指针贴边停留时长")) {
+                            Text("\(store.dockPeekHoldMs) ms")
+                                .monospacedDigit()
+                                .foregroundColor(.secondary)
+                        }
+                        Slider(value: Binding(
+                            get: { Double(store.dockPeekHoldMs) },
+                            set: { store.dockPeekHoldMs = Int($0) }
+                        ), in: 300...5000, step: 100)
+                    }
+                }
+            } header: {
+                Text(L10n.tr("自动隐藏时弹出"))
+            } footer: {
+                if !systemDockAutohide {
+                    Text(L10n.tr("需要系统先在「桌面与 Dock → 自动显示和隐藏 Dock」中开启自动隐藏，此功能才可用。"))
+                } else {
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text(L10n.tr("按热键后，指针被移到 Dock 所在屏幕边缘短暂弹出 Dock，随后自动还原到原位；Dock 收起时机由 macOS 自己管理。"))
+                        Text(L10n.tr("默认热键为 Option（⌥），仅支持修饰键组合（⌘ / ⇧ / ⌃ / ⌥）。"))
+                    }
+                }
+            }
         }
         .formStyle(.grouped)
+        .onAppear {
+            refreshSystemDockAutohide()
+        }
+        .onReceive(Timer.publish(every: 1.5, on: .main, in: .common).autoconnect()) { _ in
+            refreshSystemDockAutohide()
+        }
+    }
+
+    /// 系统「桌面与 Dock → 自动显示和隐藏 Dock」状态（窗口可见期间轻量轮询刷新）
+    private func refreshSystemDockAutohide() {
+        systemDockAutohide = DockPeekManager.readSystemAutohide()
     }
 }
 
