@@ -219,3 +219,8 @@
 - **Pitfall:** 给面板加玻璃背景（`glass + hosting` 兄弟结构）时把 `contentView` 从 `NSHostingView` 换成普通容器，随后 `centerOnMouseScreen` / `layoutAndPosition` 里用 `contentView?.fittingSize` 量内容尺寸会拿到 0/旧值——容器一般只装子视图、没有 Auto Layout 依赖，fittingSize 不等于 SwiftUI 的自然尺寸。
 - **Cause:** `fittingSize` 走的是约束/内在内容尺寸链，裸 `NSHostingView` 有 SwiftUI 内容的内在尺寸，容器没有。
 - **Prevention:** 液态玻璃面板统一用一个 `PanelHostingContainer`（玻璃垫底 + hosting autoresizing 跟随，DEV-037），并暴露 `contentFittingSize = hosting.fittingSize`；面板定位/定窗改量这个值，别再依赖 `contentView?.fittingSize`。玻璃层位置要么 autoresizing、要么在容器 `layout()` 里按 bounds 重设（内缩量也要在此补齐，否则尺寸变了玻璃边距不跟随）。
+
+## DEV-044: 新 SDK(27.x) 下合成鼠标事件的 API 形态变化
+- **Pitfall:** Dock 快捷键弹出功能里检查「鼠标是否按住」时用老的 C 函数 `CGEventSourceButtonState(.combinedSessionState, .left)` 编译报错；顺手补的 `.middle` 也报 `CGMouseButton has no member 'middle'`。
+- **Cause:** 新 SDK 把 CoreGraphics 事件源的全局 C 函数换成了 `CGEventSource` 的实例/类型方法（`CGEventSource.buttonState(_:button:)`），且 Swift 侧 `CGMouseButton` 只暴露 `.left`/`.right`（`kCGMouseButtonMiddle` 其实存在但没桥接成 case，中键由右键 tap 监听覆盖即可）。
+- **Prevention:** 新 SDK 写合成事件相关代码时，事件源状态查询一律用 `CGEventSource(button/key)State(_ stateID:)` 系实例 API；遇到 `has been replaced by` 的报错直接改用提示的新形式，别套老 C 函数名。另：8 个 `(1 << CGEventType.xxx.rawValue)` 的 OR 长链别再包一层 `CGEventMask(...)` 括号函数调用，拆成 `let mask: CGEventMask = ... | ...` 逐行写，否则「compiler unable to type-check in reasonable time」。
