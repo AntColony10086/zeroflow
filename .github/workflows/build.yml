@@ -1,6 +1,7 @@
 name: Build and Release
 
 on:
+  workflow_dispatch:
   pull_request:
     branches:
       - main
@@ -74,6 +75,8 @@ jobs:
             -scheme Zeroflow \
             -configuration Release \
             -derivedDataPath build \
+            ARCHS="x86_64" \
+            ONLY_ACTIVE_ARCH=NO \
             CODE_SIGN_IDENTITY="$CS_IDENTITY" \
             CODE_SIGN_STYLE=Manual \
             DEVELOPMENT_TEAM="$CS_TEAM" \
